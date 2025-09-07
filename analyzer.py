@@ -58,7 +58,8 @@ class TechnicalAnalyzer:
             composition_score=composition,
             overall_quality=overall,
             processing_mode=ProcessingMode.FAST,
-            keywords=None  # Traditional CV doesn't generate keywords
+            keywords=None,  # Traditional CV doesn't generate keywords
+            description=None  # Traditional CV doesn't generate descriptions
         )
     
     def _blur_score(self, gray: np.ndarray) -> float:
@@ -265,7 +266,8 @@ class VisionAnalyzer:
                     composition_score=scores['composition'],
                     overall_quality=scores['quality'],
                     processing_mode=ProcessingMode.ACCURATE,
-                    keywords=None  # CLIP doesn't generate keywords in this implementation
+                    keywords=None,  # CLIP doesn't generate keywords in this implementation
+                    description=None  # CLIP doesn't generate descriptions in this implementation
                 )
                 metrics_list.append(metrics)
                 

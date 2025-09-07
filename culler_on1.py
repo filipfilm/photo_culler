@@ -34,36 +34,64 @@ def read_on1_metadata(on1_file):
         return None
 
 
-def write_on1_metadata(filepath, decision, metrics, confidence, issues):
+def write_on1_metadata(filepath, decision, metrics, confidence, issues, override=False):
     """Write to ON1 .on1 sidecar file preserving existing metadata"""
     on1_file = filepath.with_suffix('.on1')
     
-    # Read existing data
+    # Read existing data or create new structure
     data = read_on1_metadata(on1_file)
     if not data:
-        return False  # No ON1 file exists
+        # Create a new ON1 structure
+        data = {
+            "version": "2.0",
+            "photos": {
+                str(filepath.name): {
+                    "metadata": {}
+                }
+            }
+        }
     
-    # Find the photo entry
+    # Find or create the photo entry
     photos = data.get('photos', {})
-    if not photos:
-        return False
     
-    # Get the first (and usually only) photo entry
-    photo_id = list(photos.keys())[0]
+    # Look for existing photo entry by filename
+    photo_id = str(filepath.name)
+    if photo_id not in photos:
+        # Try to find by any existing key (sometimes ON1 uses different naming)
+        if photos:
+            photo_id = list(photos.keys())[0]
+        else:
+            # Create new photo entry
+            photos[photo_id] = {"metadata": {}}
+    
     photo_data = photos[photo_id]
     
     # Get or create metadata section
     metadata = photo_data.setdefault('metadata', {})
     
-    # Get existing keywords and remove old culler data
+    # Handle existing keywords based on override mode
     existing_keywords = metadata.get('Keywords', [])
-    existing_keywords = [kw for kw in existing_keywords 
-                        if not kw.startswith('PhotoCuller:') 
-                        and not kw.startswith('CullerConfidence:')
-                        and not kw.startswith('CullerIssues:')
-                        and not kw.startswith('CullerAnalysis:')
-                        and not kw.startswith('CullerSuggestedRating:')
-                        and not kw.startswith('AI:')]
+    
+    if override:
+        # Override mode: only keep non-culler keywords, but replace everything
+        existing_keywords = [kw for kw in existing_keywords 
+                            if not kw.startswith('PhotoCuller:') 
+                            and not kw.startswith('CullerConfidence:')
+                            and not kw.startswith('CullerIssues:')
+                            and not kw.startswith('CullerAnalysis:')
+                            and not kw.startswith('CullerSuggestedRating:')
+                            and not kw.startswith('AI:')]
+        # In override mode, clear existing keywords and start fresh
+        existing_keywords = []
+    else:
+        # Preserve mode: only remove old culler data, keep user keywords
+        existing_keywords = [kw for kw in existing_keywords 
+                            if not kw.startswith('PhotoCuller:') 
+                            and not kw.startswith('CullerConfidence:')
+                            and not kw.startswith('CullerIssues:')
+                            and not kw.startswith('CullerAnalysis:')
+                            and not kw.startswith('CullerSuggestedRating:')
+                            and not kw.startswith('AI:')]
     
     # Add new culler keywords
     issues_str = ', '.join(issues) if issues else 'none'
@@ -73,10 +101,16 @@ def write_on1_metadata(filepath, decision, metrics, confidence, issues):
         f'CullerIssues:{issues_str}'
     ]
     
-    # Add AI-generated keywords if available
+    # Add clean AI-generated keywords (no prefix, they're already good)
     if hasattr(metrics, 'keywords') and metrics.keywords:
-        ai_keywords = [f'AI:{kw}' for kw in metrics.keywords[:10]]  # Limit to 10 keywords
-        culler_keywords.extend(ai_keywords)
+        existing_keywords.extend(metrics.keywords[:8])  # Add directly to keywords
+    
+    # Handle description based on override mode
+    if hasattr(metrics, 'description') and metrics.description:
+        if override or 'Description' not in metadata:
+            # Override existing description or add if none exists
+            metadata['Description'] = metrics.description
+        # In preserve mode, don't overwrite existing descriptions
     
     # Only suggest rating if none exists (rating 0 means no rating in ON1)
     existing_rating = metadata.get('Rating', 0)
@@ -95,10 +129,19 @@ def write_on1_metadata(filepath, decision, metrics, confidence, issues):
         
         culler_keywords.append(f'CullerSuggestedRating:{suggested_rating}')
     
-    # Add detailed analysis
-    analysis = f"CullerAnalysis:Decision={decision},Conf={confidence:.2f},Issues={issues_str},Blur={metrics.blur_score:.2f},Exposure={metrics.exposure_score:.2f},Composition={metrics.composition_score:.2f},Overall={metrics.overall_quality:.2f}"
-    culler_keywords.append(analysis)
+    # Store technical analysis in separate field (not keywords)
+    analysis = {
+        'decision': decision,
+        'confidence': f'{confidence:.2f}',
+        'issues': issues_str,
+        'blur_score': f'{metrics.blur_score:.2f}',
+        'exposure_score': f'{metrics.exposure_score:.2f}',
+        'composition_score': f'{metrics.composition_score:.2f}',
+        'overall_quality': f'{metrics.overall_quality:.2f}'
+    }
+    metadata['PhotoCullerAnalysis'] = analysis
     
+    # Only add the basic culler tags to keywords (clean and searchable)
     existing_keywords.extend(culler_keywords)
     metadata['Keywords'] = existing_keywords
     
@@ -164,6 +207,16 @@ def print_result(filepath, decision, confidence, issues, metrics):
     if issues:
         print(f"   Issues: {issues_str}")
     print(f"   Scores: blur={metrics.blur_score:.2f} exposure={metrics.exposure_score:.2f} composition={metrics.composition_score:.2f}")
+    
+    # Show description if available
+    if hasattr(metrics, 'description') and metrics.description:
+        print(f"   📝 {metrics.description}")
+    
+    # Show keywords if available
+    if hasattr(metrics, 'keywords') and metrics.keywords:
+        keywords_str = ', '.join(metrics.keywords[:6])  # Show first 6 keywords
+        print(f"   🏷️  {keywords_str}")
+    
     print()
 
 
@@ -174,10 +227,11 @@ def print_result(filepath, decision, confidence, issues, metrics):
 @click.option('--csv-file', default='photo_culler_results.csv', help='CSV file to append results to')
 @click.option('--move-deletes', is_flag=True, help='Move files marked for deletion')
 @click.option('--use-ollama', is_flag=True, help='Use Ollama vision model instead of CLIP')
-@click.option('--ollama-model', default='llava:7b', help='Ollama model to use')
+@click.option('--ollama-model', default='llava:13b', help='Ollama model to use')
 @click.option('--verbose', is_flag=True, help='Show processing details')
 @click.option('--extensions', default='nef,cr2,arw,jpg,jpeg', help='File extensions to process')
-def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama_model, verbose, extensions):
+@click.option('--override', is_flag=True, help='Override existing keywords and descriptions (preserves ratings and edits)')
+def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama_model, verbose, extensions, override):
     """
     All-in-one photo culler for ON1 Photo RAW:
     
@@ -272,11 +326,18 @@ def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama
                 
                 # Write ON1 metadata (unless fast mode)
                 if not fast:
-                    if write_on1_metadata(filepath, decision, metrics, confidence, issues):
+                    on1_file = filepath.with_suffix('.on1')
+                    file_existed = on1_file.exists()
+                    
+                    if write_on1_metadata(filepath, decision, metrics, confidence, issues, override):
                         on1_updated += 1
-                        print(f"   ✅ Updated ON1 metadata")
+                        if file_existed:
+                            action = "Overrode" if override else "Updated"
+                            print(f"   ✅ {action} ON1 metadata")
+                        else:
+                            print(f"   ✅ Created ON1 metadata file")
                     else:
-                        print(f"   ⚠️  No ON1 file found")
+                        print(f"   ❌ Failed to write ON1 metadata")
                 
                 # Append to CSV
                 append_to_csv(csv_path, filepath, decision, confidence, issues, metrics, processing_ms)

@@ -75,22 +75,26 @@ def read_existing_xmp(xmp_file):
     return existing
 
 
-def create_standard_xmp(filepath, decision, metrics, confidence, issues, existing):
+def create_standard_xmp(filepath, decision, metrics, confidence, issues, existing, override=False):
     """Create standard XMP sidecar file that works with all photo apps"""
     xmp_file = filepath.with_suffix(filepath.suffix + '.xmp')
     
     # Prepare data
     issues_str = ', '.join(issues) if issues else 'none'
     
-    # Combine keywords (preserve existing, add culler data, add AI keywords)
+    # Handle keywords based on override mode
     all_keywords = existing['keywords'].copy()
     
-    # Remove old culler keywords first
-    all_keywords = [kw for kw in all_keywords 
-                   if not kw.startswith('PhotoCuller:')
-                   and not kw.startswith('CullerConfidence:')
-                   and not kw.startswith('CullerIssues:')
-                   and not kw.startswith('AI:')]
+    if override:
+        # Override mode: replace all keywords with just culler + AI keywords
+        all_keywords = []
+    else:
+        # Preserve mode: remove old culler keywords but keep user keywords
+        all_keywords = [kw for kw in all_keywords 
+                       if not kw.startswith('PhotoCuller:')
+                       and not kw.startswith('CullerConfidence:')
+                       and not kw.startswith('CullerIssues:')
+                       and not kw.startswith('AI:')]
     
     # Add new culler keywords  
     culler_keywords = [
@@ -100,10 +104,9 @@ def create_standard_xmp(filepath, decision, metrics, confidence, issues, existin
     ]
     all_keywords.extend(culler_keywords)
     
-    # Add AI-generated keywords if available
+    # Add clean AI-generated keywords (no prefix, they're already good)
     if hasattr(metrics, 'keywords') and metrics.keywords:
-        ai_keywords = [f'AI:{kw}' for kw in metrics.keywords[:10]]  # Limit to 10 keywords
-        all_keywords.extend(ai_keywords)
+        all_keywords.extend(metrics.keywords[:8])  # Add directly to keywords
     
     # Create keywords XML
     keywords_xml = '\n'.join([f'          <rdf:li>{kw}</rdf:li>' for kw in all_keywords])
@@ -128,8 +131,20 @@ def create_standard_xmp(filepath, decision, metrics, confidence, issues, existin
         all_keywords.append(f'CullerSuggestedRating:{suggested_rating}')
         keywords_xml = '\n'.join([f'          <rdf:li>{kw}</rdf:li>' for kw in all_keywords])
     
-    # Create analysis description
-    analysis = f"""Photo Culler Analysis ({datetime.now().strftime('%Y-%m-%d %H:%M')}):
+    # Handle description based on override mode
+    if override:
+        # Override mode: use only AI description if available, otherwise create basic analysis
+        if hasattr(metrics, 'description') and metrics.description:
+            full_description = metrics.description
+        else:
+            full_description = f"Photo Culler Analysis: {decision} (confidence: {confidence:.2f})"
+    else:
+        # Preserve mode: combine existing description with AI description and analysis
+        ai_description = ""
+        if hasattr(metrics, 'description') and metrics.description:
+            ai_description = f"AI Description: {metrics.description}\n\n"
+        
+        analysis = f"""Photo Culler Analysis ({datetime.now().strftime('%Y-%m-%d %H:%M')}):
 Decision: {decision} (confidence: {confidence:.2f})
 Issues: {issues_str}
 
@@ -138,12 +153,16 @@ Quality Scores:
 • Exposure: {metrics.exposure_score:.2f}
 • Composition: {metrics.composition_score:.2f}
 • Overall: {metrics.overall_quality:.2f}"""
-    
-    # Combine descriptions
-    if existing['description']:
-        full_description = f"{existing['description']}\n\n{analysis}"
-    else:
-        full_description = analysis
+        
+        # Combine all descriptions
+        parts = []
+        if existing['description']:
+            parts.append(existing['description'])
+        if ai_description:
+            parts.append(ai_description.strip())
+        parts.append(analysis)
+        
+        full_description = '\n\n'.join(parts)
     
     # Create XMP content with proper ON1-compatible structure
     xmp_content = f'''<?xml version="1.0" encoding="UTF-8"?>
@@ -244,6 +263,16 @@ def print_result(filepath, decision, confidence, issues, metrics):
     if issues:
         print(f"   Issues: {issues_str}")
     print(f"   Scores: blur={metrics.blur_score:.2f} exposure={metrics.exposure_score:.2f} composition={metrics.composition_score:.2f}")
+    
+    # Show description if available
+    if hasattr(metrics, 'description') and metrics.description:
+        print(f"   📝 {metrics.description}")
+    
+    # Show keywords if available
+    if hasattr(metrics, 'keywords') and metrics.keywords:
+        keywords_str = ', '.join(metrics.keywords[:6])  # Show first 6 keywords
+        print(f"   🏷️  {keywords_str}")
+    
     print()
 
 
@@ -254,10 +283,11 @@ def print_result(filepath, decision, confidence, issues, metrics):
 @click.option('--csv-file', default='photo_culler_results.csv', help='CSV file to append results to')
 @click.option('--move-deletes', is_flag=True, help='Move files marked for deletion')
 @click.option('--use-ollama', is_flag=True, help='Use Ollama vision model instead of CLIP')
-@click.option('--ollama-model', default='llava:7b', help='Ollama model to use')
+@click.option('--ollama-model', default='llava:13b', help='Ollama model to use')
 @click.option('--verbose', is_flag=True, help='Show processing details')
 @click.option('--extensions', default='nef,cr2,arw,jpg,jpeg', help='File extensions to process')
-def cull_universal(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama_model, verbose, extensions):
+@click.option('--override', is_flag=True, help='Override existing keywords and descriptions (preserves ratings and edits)')
+def cull_universal(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama_model, verbose, extensions, override):
     """
     Universal photo culler - works with all photo apps:
     
@@ -355,9 +385,10 @@ def cull_universal(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, 
                     xmp_file = filepath.with_suffix(filepath.suffix + '.xmp')
                     existing = read_existing_xmp(xmp_file)
                     
-                    if create_standard_xmp(filepath, decision, metrics, confidence, issues, existing):
+                    if create_standard_xmp(filepath, decision, metrics, confidence, issues, existing, override):
                         xmp_created += 1
-                        print(f"   ✅ Created/updated XMP metadata")
+                        action = "Overrode" if override and existing['keywords'] else "Created/updated"
+                        print(f"   ✅ {action} XMP metadata")
                     else:
                         print(f"   ❌ Failed to write XMP")
                 

@@ -15,6 +15,7 @@ class ImageMetrics:
     overall_quality: float  # 0-1, weighted combination
     processing_mode: ProcessingMode
     keywords: Optional[List[str]] = None  # AI-generated keywords
+    description: Optional[str] = None  # Natural language description
     
 @dataclass
 class CullResult:

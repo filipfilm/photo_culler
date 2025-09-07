@@ -123,13 +123,14 @@ class OllamaVisionAnalyzer:
             raise
     
     def _parse_quality_scores(self, response: str) -> Dict:
-        """Parse quality scores and keywords from Ollama response"""
+        """Parse quality scores, keywords, and description from Ollama response"""
         scores = {
             'blur': 0.5,
             'exposure': 0.5,
             'composition': 0.5,
             'quality': 0.5,
-            'keywords': []
+            'keywords': [],
+            'description': ''
         }
         
         # Look for numerical scores in the response
@@ -206,6 +207,23 @@ class OllamaVisionAnalyzer:
                             except ValueError:
                                 continue
         
+        # Parse description
+        description_patterns = [
+            r'description:\s*(.+?)(?:\n\w+:|$)',  # Stop at next field
+            r'summary:\s*(.+?)(?:\n\w+:|$)',
+        ]
+        
+        for pattern in description_patterns:
+            matches = re.findall(pattern, response, re.MULTILINE | re.DOTALL | re.IGNORECASE)
+            if matches:
+                description = matches[0].strip()
+                # Clean up the description
+                description = ' '.join(description.split())  # Normalize whitespace
+                description = description.rstrip('.,;!?')
+                if description and len(description) > 10:  # Ensure it's meaningful
+                    scores['description'] = description
+                    break
+        
         # Parse keywords with better handling for creative, multi-word keywords
         keyword_patterns = [
             r'keywords:\s*(.+?)(?:\n\n|\nblur|\nexposure|$)',  # Stop at next section
@@ -247,84 +265,81 @@ class OllamaVisionAnalyzer:
         """Analyze multiple images"""
         metrics_list = []
         
-        # NEW PROMPT FOR SUBJECT-AWARE FOCUS
-        prompt = """CRITICAL: Evaluate if the MAIN SUBJECT is in sharp focus. This was shot with shallow depth of field (f/1.8-f/2.8), so background blur is INTENTIONAL.
+        # COMPREHENSIVE SUBJECT-AWARE ANALYSIS PROMPT
+        prompt = """You are analyzing a photograph for technical quality AND creating searchable metadata.
 
-STEP 1 - IDENTIFY THE SUBJECT:
-What is the primary subject and where should focus be?
-- Portrait: The nearest eye (critical!)
-- Group shot: Face(s) in foreground
-- Product: Logo/text/main feature
-- Pet: Eyes/face
-- Landscape: Foreground element or infinity
-- Street: The person/object of interest
+=== TECHNICAL ANALYSIS ===
 
-STEP 2 - EVALUATE SUBJECT SHARPNESS ONLY:
+FOCUS EVALUATION - This was shot with shallow DOF (f/1.8-f/2.8), background blur is INTENTIONAL:
 
-FOR PORTRAITS (most critical):
-✓ Is the nearest eye tack sharp? Can you see individual eyelashes?
-✓ If both eyes visible at same distance, are both sharp?
-✗ Is focus on nose/ear/hair/clothing instead of eyes?
-✗ Is the face soft while background is sharp? (back-focused)
+1. IDENTIFY THE MAIN SUBJECT:
+   - Portrait: Person's face/eyes
+   - Animal: Pet's face/eyes  
+   - Product: Key feature/text
+   - Street: Main person/object
+   - Landscape: Foreground element
 
-CRITICAL FAILURES (Score 0.0-0.3):
-- Eyes are soft/blurry = DELETE
-- Focus hit background instead = DELETE  
-- Focus on wrong person = DELETE
-- Motion blur on face = DELETE
+2. EVALUATE SUBJECT SHARPNESS ONLY:
+   - Portrait: Are the eyes tack sharp? Individual eyelashes visible?
+   - Other subjects: Is the key detail crisp and well-defined?
+   
+   SCORING (0.0-1.0):
+   1.0 = Perfect subject focus
+   0.8 = Good professional quality
+   0.6 = Acceptable but not ideal
+   0.4 = Soft, needs review
+   0.2 = Missed focus, delete
+   0.0 = Completely wrong focus
 
-ACCEPTABLE (Score 0.7-1.0):
-- Eye(s) sharp, even if tip of nose soft = KEEP
-- Subject sharp with creamy bokeh = PERFECT
-- One eye sharp (if head turned) = KEEP
+EXPOSURE EVALUATION (0.0-1.0):
+- Consider artistic intent, not just technical perfection
+- 1.0: Beautiful light with full tonal range
+- 0.8: Well-exposed with good detail
+- 0.6: Minor over/under exposure, still usable
+- 0.4: Noticeable exposure issues
+- 0.2: Significant problems, recoverable
+- 0.0: Blown highlights or blocked shadows, unusable
 
-FOR OTHER SUBJECTS:
-- Product: Is text/logo readable?
-- Animal: Are eyes/whiskers sharp?
-- Object: Is the key detail crisp?
-- Street: Is intended subject in focus?
+COMPOSITION EVALUATION (0.0-1.0):
+- Visual impact and storytelling effectiveness
+- 1.0: Compelling composition, draws the eye
+- 0.8: Strong framing and balance
+- 0.6: Good composition with minor issues
+- 0.4: Acceptable but could be better
+- 0.2: Poor framing or distracting elements
+- 0.0: Bad composition, major problems
 
-SCORING (BE STRICT BUT FAIR):
-1.0 = Perfect critical focus on subject
-0.8 = Good focus, professional quality
-0.6 = Acceptable but not ideal
-0.4 = Soft, questionable (review needed)
-0.2 = Missed focus (delete)
-0.0 = Completely wrong focus point
+=== CONTENT ANALYSIS ===
 
-IGNORE THESE (not focus problems):
-- Bokeh quality in background
-- Blur in foreground/background
-- Shallow DOF making ears/hair soft
-- Artistic selective focus
+DESCRIPTION: Write a natural 1-2 sentence description of what's happening in the image.
 
-EXPOSURE (0.0-1.0): Technical exposure quality:
-- Are there blown-out highlights (pure white areas with no detail)?
-- Are there blocked shadows (pure black areas with no detail)?
-- Is the overall brightness appropriate for the subject?
-- Can you see detail in both bright and dark areas?
+KEYWORDS: Generate 6-8 SPECIFIC, searchable keywords. Be DESCRIPTIVE and USEFUL:
 
-COMPOSITION (0.0-1.0): Visual composition:
-- Is the subject well-positioned and framed?
-- Are there distracting elements or poor cropping?
-- Does the image have good visual balance?
+GOOD EXAMPLES:
+- "toddler exploring playground"
+- "golden retriever catching frisbee"
+- "sunset over mountain lake"
+- "grandmother teaching cooking"
+- "rain-soaked city street"
+- "wedding ceremony outdoor"
+- "macro dewdrops spider web"
 
-OVERALL QUALITY (0.0-1.0): Would you keep this photo?
-- 0.8-1.0: Definitely keep, excellent quality
-- 0.6-0.8: Keep, good quality with minor issues  
-- 0.4-0.6: Review needed, moderate quality
-- 0.2-0.4: Likely delete, poor quality
-- 0.0-0.2: Definitely delete, unacceptable
+BAD EXAMPLES (avoid these):
+- "person" → use "young woman", "elderly man", "teenager"
+- "outdoor" → use "forest path", "beach sunset", "urban rooftop"
+- "animal" → use "tabby cat", "golden retriever", "red cardinal"
+- "everyday life" → be specific about the activity
 
-What did you find?
-Subject: [what/who is the subject]
-Focus point: [where is actual focus]
+RESPOND IN EXACT FORMAT:
+Description: [Natural description of what's happening]
+Subject: [What/who is the main subject]
+Focus point: [Where focus actually is]
 Subject sharpness: [sharp/soft/missed]
-Blur score: 0.XX (ONLY rate subject sharpness!)
+Blur score: 0.XX
 Exposure score: 0.XX
 Composition score: 0.XX
 Overall quality: 0.XX
-Keywords: [5-10 describing the image]"""
+Keywords: keyword1, keyword2, keyword3, keyword4, keyword5, keyword6"""
         
         for image in images:
             try:
@@ -345,7 +360,8 @@ Keywords: [5-10 describing the image]"""
                     composition_score=scores['composition'],
                     overall_quality=scores['quality'],
                     processing_mode=ProcessingMode.ACCURATE,
-                    keywords=scores['keywords']
+                    keywords=scores['keywords'],
+                    description=scores['description']
                 )
                 
                 metrics_list.append(metrics)
@@ -359,7 +375,8 @@ Keywords: [5-10 describing the image]"""
                     composition_score=0.5,
                     overall_quality=0.5,
                     processing_mode=ProcessingMode.ACCURATE,
-                    keywords=[]
+                    keywords=[],
+                    description=""
                 )
                 metrics_list.append(metrics)
         

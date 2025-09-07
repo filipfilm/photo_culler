@@ -153,12 +153,13 @@ The system evaluates three key metrics:
 ## File Structure 📁
 
 ```
-ac_controller/
+photo_culler/
 ├── models.py              # Data structures 
 ├── analyzer.py            # Hybrid CV + Vision analysis
 ├── extractor.py           # RAW thumbnail extraction  
 ├── decision.py            # Culling decision logic
 ├── batch.py              # Batch processing with caching
+├── ollama_vision.py       # Ollama vision model integration
 ├── culler_on1.py         # ON1 Photo RAW culling
 ├── culler_universal.py   # Universal metadata culling  
 ├── requirements_photo.txt # Python dependencies
@@ -285,7 +286,9 @@ CullingDecisionEngine(
 
 ### Integration with Other Tools:
 ```python
-from ac_controller import BatchCuller, ProcessingMode
+from pathlib import Path
+from batch import BatchCuller
+from models import ProcessingMode
 
 culler = BatchCuller(mode=ProcessingMode.ACCURATE)
 results = culler.process_folder_batch(Path("/photos"))

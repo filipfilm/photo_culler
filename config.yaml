@@ -1,0 +1,38 @@
+# Photo Culler Configuration
+model:
+  type: ollama  # or clip
+  ollama_model: llava:13b  # or llama3.2-vision:11b
+  batch_size: 4
+
+# Adjusted for f/1.8 shooting
+thresholds:
+  blur:
+    delete: 0.3    # More forgiving for shallow DOF
+    review: 0.5
+  exposure:
+    delete: 0.3
+    review: 0.5
+  composition:
+    delete: 0.2
+    review: 0.4
+  
+# Subject detection
+subject_detection:
+  enabled: true
+  portrait_eye_threshold: 0.6  # Minimum eye sharpness
+  center_weight: 0.3  # How much to weight center focus
+
+# File handling  
+extensions:
+  - .nef
+  - .cr2
+  - .arw
+  - .jpg
+  - .jpeg
+  - .dng
+  - .raf
+
+# Caching
+cache:
+  dir: ~/.cache/photo_culler
+  preserve_days: 30

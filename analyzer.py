@@ -21,6 +21,12 @@ try:
 except ImportError:
     OLLAMA_AVAILABLE = False
 
+try:
+    from subject_detector import SubjectDetector
+    SUBJECT_DETECTOR_AVAILABLE = True
+except ImportError:
+    SUBJECT_DETECTOR_AVAILABLE = False
+
 VISION_AVAILABLE = CLIP_AVAILABLE or OLLAMA_AVAILABLE
 
 
@@ -135,10 +141,16 @@ class VisionAnalyzer:
                  device: Optional[str] = None, 
                  model_size: str = "ViT-B/32",
                  use_ollama: bool = False,
-                 ollama_model: str = "llava:7b"):
+                 ollama_model: str = "llava:13b"):  # Changed default
         
         self.logger = logging.getLogger(__name__)
         self.use_ollama = use_ollama
+        
+        # Add subject detector
+        if SUBJECT_DETECTOR_AVAILABLE:
+            self.subject_detector = SubjectDetector()
+        else:
+            self.subject_detector = None
         
         if not VISION_AVAILABLE:
             raise ImportError("No vision model available. Install torch+clip-by-openai OR setup Ollama")
@@ -260,11 +272,37 @@ class VisionAnalyzer:
         return metrics_list
     
     def analyze(self, image: Image.Image) -> ImageMetrics:
-        """Single image analysis"""
+        """Single image analysis with subject detection"""
+        
+        # First check subject focus with CV
+        subject_focus = 0.5  # Default fallback
+        if self.subject_detector:
+            try:
+                subject_focus = self.subject_detector.check_subject_focus(image)
+            except Exception as e:
+                self.logger.warning(f"Subject detection failed: {e}")
+        
+        # Get base metrics from vision model
         if self.use_ollama:
-            return self.analyzer.analyze(image)
+            metrics = self.analyzer.analyze(image)
         else:
-            return self.analyze_batch([image])[0]
+            metrics = self.analyze_batch([image])[0]
+        
+        # Adjust blur score based on subject detection
+        # Weight: 70% vision model, 30% CV subject detection
+        metrics.blur_score = (metrics.blur_score * 0.7 + subject_focus * 0.3)
+        
+        # If portrait with bad eye focus, override to low score
+        if self.subject_detector:
+            try:
+                portrait_info = self.subject_detector.detect_portrait_subject(image)
+                if portrait_info["is_portrait"] and portrait_info.get("eye_sharpness", 1.0) < 0.3:
+                    metrics.blur_score = min(metrics.blur_score, 0.3)
+                    self.logger.debug(f"Portrait with soft eyes detected, capping blur score at 0.3")
+            except Exception as e:
+                self.logger.warning(f"Portrait detection failed: {e}")
+        
+        return metrics
 
 
 class HybridAnalyzer:
@@ -272,7 +310,7 @@ class HybridAnalyzer:
     def __init__(self, mode: ProcessingMode = ProcessingMode.ACCURATE, 
                  force_cpu: bool = False,
                  use_ollama: bool = False,
-                 ollama_model: str = "llava:7b"):
+                 ollama_model: str = "llava:13b"):
         self.mode = mode
         self.logger = logging.getLogger(__name__)
         

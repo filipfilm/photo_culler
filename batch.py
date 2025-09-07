@@ -19,12 +19,14 @@ class BatchCuller:
                  batch_size: int = 8,
                  force_cpu: bool = False,
                  use_ollama: bool = False,
-                 ollama_model: str = "llava:7b"):
+                 ollama_model: str = "llava:13b"):
         
         self.cache_dir = cache_dir
         self.mode = mode
         self.max_workers = max_workers
         self.batch_size = batch_size
+        self.use_ollama = use_ollama
+        self.ollama_model = ollama_model
         self.logger = logging.getLogger(__name__)
         
         # Initialize components
@@ -65,7 +67,9 @@ class BatchCuller:
     def _get_file_hash(self, filepath: Path) -> str:
         """Get file hash for cache key"""
         stat = filepath.stat()
-        return f"{filepath.name}_{stat.st_size}_{stat.st_mtime}"
+        # Include model in cache key
+        model_id = self.ollama_model if self.use_ollama else "clip"
+        return f"{filepath.name}_{stat.st_size}_{stat.st_mtime}_{model_id}"
     
     def process_image(self, filepath: Path) -> Optional[CullResult]:
         """Process single image"""

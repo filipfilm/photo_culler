@@ -247,18 +247,56 @@ class OllamaVisionAnalyzer:
         """Analyze multiple images"""
         metrics_list = []
         
-        # Craft a comprehensive prompt for photo quality assessment with focus on sharpness AND keywords
-        prompt = """Analyze this photograph for technical quality AND generate relevant keywords. 
+        # NEW PROMPT FOR SUBJECT-AWARE FOCUS
+        prompt = """CRITICAL: Evaluate if the MAIN SUBJECT is in sharp focus. This was shot with shallow depth of field (f/1.8-f/2.8), so background blur is INTENTIONAL.
 
-TECHNICAL QUALITY - Rate each aspect from 0.0 to 1.0:
+STEP 1 - IDENTIFY THE SUBJECT:
+What is the primary subject and where should focus be?
+- Portrait: The nearest eye (critical!)
+- Group shot: Face(s) in foreground
+- Product: Logo/text/main feature
+- Pet: Eyes/face
+- Landscape: Foreground element or infinity
+- Street: The person/object of interest
 
-FOCUS/SHARPNESS (0.0-1.0): Examine these details carefully:
-- Are fine details like hair, fabric texture, leaves, or text crisp and well-defined?
-- Do edges appear clean and sharp, or are they soft and fuzzy?
-- Is there visible motion blur or camera shake?
-- For portraits: Are the eyes and eyelashes sharp? Can you see individual hairs?
-- For landscapes: Are distant objects and fine details clearly defined?
-- Overall: Is this acceptably sharp for professional use?
+STEP 2 - EVALUATE SUBJECT SHARPNESS ONLY:
+
+FOR PORTRAITS (most critical):
+✓ Is the nearest eye tack sharp? Can you see individual eyelashes?
+✓ If both eyes visible at same distance, are both sharp?
+✗ Is focus on nose/ear/hair/clothing instead of eyes?
+✗ Is the face soft while background is sharp? (back-focused)
+
+CRITICAL FAILURES (Score 0.0-0.3):
+- Eyes are soft/blurry = DELETE
+- Focus hit background instead = DELETE  
+- Focus on wrong person = DELETE
+- Motion blur on face = DELETE
+
+ACCEPTABLE (Score 0.7-1.0):
+- Eye(s) sharp, even if tip of nose soft = KEEP
+- Subject sharp with creamy bokeh = PERFECT
+- One eye sharp (if head turned) = KEEP
+
+FOR OTHER SUBJECTS:
+- Product: Is text/logo readable?
+- Animal: Are eyes/whiskers sharp?
+- Object: Is the key detail crisp?
+- Street: Is intended subject in focus?
+
+SCORING (BE STRICT BUT FAIR):
+1.0 = Perfect critical focus on subject
+0.8 = Good focus, professional quality
+0.6 = Acceptable but not ideal
+0.4 = Soft, questionable (review needed)
+0.2 = Missed focus (delete)
+0.0 = Completely wrong focus point
+
+IGNORE THESE (not focus problems):
+- Bokeh quality in background
+- Blur in foreground/background
+- Shallow DOF making ears/hair soft
+- Artistic selective focus
 
 EXPOSURE (0.0-1.0): Technical exposure quality:
 - Are there blown-out highlights (pure white areas with no detail)?
@@ -278,38 +316,15 @@ OVERALL QUALITY (0.0-1.0): Would you keep this photo?
 - 0.2-0.4: Likely delete, poor quality
 - 0.0-0.2: Definitely delete, unacceptable
 
-KEYWORDS: Generate 8-15 creative, searchable keywords that tell the story of this image:
-
-EMOTIONAL & MOOD:
-- What feeling does this evoke? (joyful, serene, energetic, contemplative, romantic, nostalgic)
-- What's the atmosphere? (golden hour magic, urban energy, peaceful morning, cozy evening)
-
-VISUAL STYLE & AESTHETICS:
-- Photography style: candid moment, lifestyle shot, urban documentary, intimate portrait
-- Visual qualities: sun-drenched, moody shadows, vibrant colors, soft pastels, high contrast
-- Composition: leading lines, rule of thirds, symmetry, bokeh background
-
-STORY & NARRATIVE:
-- What's happening? (family bonding, quiet contemplation, celebration, adventure)
-- Life moments: childhood wonder, teenage rebellion, parental love, friendship goals
-- Activities: exploring together, sharing laughter, peaceful reflection, daily rituals
-
-SPECIFIC DETAILS:
-- Unique elements: vintage bicycle, colorful street art, flowering trees, architectural details
-- Weather/season: crisp autumn day, warm summer evening, fresh spring morning
-- Cultural context: city life, suburban comfort, rural tranquility
-
-Be specific and evocative - instead of "outdoor" use "sun-dappled sidewalk" or "urban exploration"
-
-Respond in EXACT format:
-Blur score: 0.XX
-Exposure score: 0.XX  
+What did you find?
+Subject: [what/who is the subject]
+Focus point: [where is actual focus]
+Subject sharpness: [sharp/soft/missed]
+Blur score: 0.XX (ONLY rate subject sharpness!)
+Exposure score: 0.XX
 Composition score: 0.XX
 Overall quality: 0.XX
-Keywords: keyword1, keyword2, keyword3, keyword4, keyword5
-
-IMPORTANT: You must provide decimal scores (like 0.75, 0.34, 0.91) not ranges.
-Be strict with focus - even slightly soft images should score below 0.7."""
+Keywords: [5-10 describing the image]"""
         
         for image in images:
             try:

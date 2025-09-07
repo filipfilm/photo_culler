@@ -5,14 +5,16 @@ numpy>=1.24.0
 opencv-python>=4.8.0
 click>=8.1.0
 requests>=2.25.0
+PyYAML>=6.0
 
-# Vision model dependencies (choose one):
+# For similar image detection (optional but recommended)
+imagehash>=4.3.0
 
-# Option 1: CLIP (PyTorch-based, GPU recommended)
+# Vision model - Ollama recommended for Mac
+# Install Ollama from https://ollama.ai
+# Then run: ollama pull llava:13b
+
+# Alternative: CLIP (PyTorch-based, GPU recommended)
 # torch>=2.0.0
 # torchvision>=0.15.0
 # clip-by-openai
-
-# Option 2: Ollama (Local LLM, works on CPU/GPU)
-# No additional Python packages needed - just install Ollama:
-# https://ollama.ai

@@ -235,7 +235,7 @@ class EnhancedFocusAnalyzer:
                 gray[3*height//4:, :].flatten(),
                 gray[:, :width//4].flatten(),
                 gray[:, 3*width//4:].flatten()
-            ]).reshape(-1, 1),
+            ]),
             'mid_ring': None  # Will calculate below
         }
         

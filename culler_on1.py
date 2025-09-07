@@ -38,116 +38,99 @@ def write_on1_metadata(filepath, decision, metrics, confidence, issues, override
     """Write to ON1 .on1 sidecar file preserving existing metadata"""
     on1_file = filepath.with_suffix('.on1')
 
-    # Read existing data or create new structure
-    data = read_on1_metadata(on1_file)
-    if not data:
-        # Create a proper ON1 structure that matches what ON1 expects
-        import uuid
-        photo_guid = str(uuid.uuid4())
+    # ON1 must create the file first - we can only edit existing files
+    if not on1_file.exists():
+        return False
 
-        data = {
-            "version": 2025,  # ON1 uses numeric version
-            "type": 1,        # Root level type
-            "photos": {
-                photo_guid: {
-                    "name": str(filepath.name),  # Filename in name field
-                    "type": 2,                   # Photo type
-                    "guid_locked": False,
-                    "face_scan_timestamp": None,
-                    "blurhash": None,
-                    "ml_classes": {"classifications": []},
-                    "metadata": {
-                        # Basic metadata that ON1 expects
-                        "Description": "",
-                        "Keywords": [],
-                        "MetadataDate": "",
-                        "MetadataDateOffset": 0,
-                        "Orientation": 1,
-                        "Resolution": {"h": 72, "v": 72}
-                    }
-                }
-            }
-        }
-    
-    # Find or create the photo entry
+    try:
+        with open(on1_file, 'r') as f:
+            data = json.load(f)
+    except:
+        return False
+
+    # Find the photo entry by matching the "name" field
     photos = data.get('photos', {})
-
-    # Look for existing photo entry by checking the "name" field in each photo entry
     photo_id = None
     filename = str(filepath.name)
 
-    # First try to find by filename as key
-    if filename in photos:
-        photo_id = filename
-    else:
-        # Look through all photo entries to find one with matching name
-        for key, photo_data in photos.items():
-            if photo_data.get('name') == filename:
-                photo_id = key
-                break
+    # Look through all photo entries to find one with matching name
+    for key, photo_data in photos.items():
+        if photo_data.get('name') == filename:
+            photo_id = key
+            break
 
-    # If not found, create new entry
     if photo_id is None:
-        photo_id = filename
-        photos[photo_id] = {"metadata": {}, "name": filename}
+        return False
 
     photo_data = photos[photo_id]
-    
-    # Preserve all existing photo-level data (blurhash, face_scan_timestamp, etc.)
-    # Only modify the metadata section
-    
+
     # Get or create metadata section
     metadata = photo_data.setdefault('metadata', {})
-    
-    # Handle existing keywords based on override mode
-    existing_keywords = metadata.get('Keywords', [])
-    
-    if override:
-        # Override mode: clear ALL existing keywords in metadata, start fresh
-        # Force clear the Keywords array in the metadata
-        metadata['Keywords'] = []
-        # Also clear hierarchical keywords if they exist
-        if 'HierarchicalKeywords' in metadata:
-            metadata['HierarchicalKeywords'] = []
-        # Start with empty keywords list
-        existing_keywords = []
 
-        # Clear ON1's AI classifications that might appear as keywords
-        # ml_classes is at the photo level, not metadata level
+    # Build new keywords list
+    new_keywords = []
+
+    if override:
+        # Override mode: Start fresh with NO existing keywords
+        # Also clear ON1's ML classifications to prevent keyword regeneration
         if 'ml_classes' in photo_data:
-            photo_data['ml_classes'] = {"classifications": []}
+            # Clear the ML classifications that generate keywords
+            ml_classes = photo_data.get('ml_classes', {})
+            classifications = ml_classes.get('classifications', [])
+
+            # Remove ONPanopticSegmenterV0 and PartialLabelingCSL entries
+            # These are what generate the annoying keywords
+            filtered_classifications = []
+            for classification in classifications:
+                class_type = classification.get('type', '')
+                if class_type not in ['ONPanopticSegmenterV0', 'PartialLabelingCSL']:
+                    # Keep only non-keyword generating classifications
+                    filtered_classifications.append(classification)
+
+            ml_classes['classifications'] = filtered_classifications
     else:
-        # Preserve mode: clear existing keywords and replace with our AI-generated ones
-        # This ensures we don't duplicate keywords from previous runs
-        existing_keywords = []
-    
-    # Add new culler keywords
+        # Preserve mode: Keep ONLY user-added keywords (not ON1's auto-generated ones)
+        existing_keywords = metadata.get('Keywords', [])
+
+        # List of typical ON1 auto-generated keywords to filter out
+        on1_auto_keywords = {
+            'Aqua', 'Banner', 'Brick wall', 'Bridge', 'Building', 'Color', 'Dirt',
+            'Fence', 'Floor', 'Human action', 'Human head', 'Person', 'Plant', 'Sea',
+            'Skin', 'Sky', 'Snowboard', 'Sports equipment', 'Swimming pool', 'T-shirt',
+            'Tree', 'Vivid', 'Wall', 'Natural environment', 'Sand', 'Snow', 'Mountain',
+            'Azure', 'Photography', 'Snapshot', 'Material property', 'Font', 'Gesture',
+            'Grass', 'Wood', 'Metal', 'Glass', 'Plastic', 'Paper', 'Textile', 'Concrete'
+        }
+
+        # Keep only keywords that are:
+        # 1. Not culler keywords (PhotoCuller:, etc.)
+        # 2. Not in the ON1 auto-generated list
+        # 3. Likely user-added (contain spaces, lowercase, or specific patterns)
+        for kw in existing_keywords:
+            if (not kw.startswith('PhotoCuller:') and
+                not kw.startswith('CullerConfidence:') and
+                not kw.startswith('CullerIssues:') and
+                not kw.startswith('CullerSuggestedRating:') and
+                kw not in on1_auto_keywords):
+                # This is likely a user keyword, keep it
+                new_keywords.append(kw)
+
+    # Add our AI-generated keywords
+    if hasattr(metrics, 'keywords') and metrics.keywords:
+        ai_keywords = metrics.keywords if isinstance(metrics.keywords, list) else []
+        new_keywords.extend(ai_keywords[:8])
+
+    # Add culler analysis keywords
     issues_str = ', '.join(issues) if issues else 'none'
     culler_keywords = [
         f'PhotoCuller:{decision}',
         f'CullerConfidence:{confidence:.2f}',
         f'CullerIssues:{issues_str}'
     ]
-    
-    # Add clean AI-generated keywords (no prefix, they're already good)
-    if hasattr(metrics, 'keywords') and metrics.keywords:
-        # Ensure keywords is a list and not None
-        ai_keywords = metrics.keywords if isinstance(metrics.keywords, list) else []
-        existing_keywords.extend(ai_keywords[:8])  # Add directly to keywords
-    
-    # Handle description based on override mode
-    if hasattr(metrics, 'description') and metrics.description:
-        if override:
-            # Override mode: always overwrite description
-            metadata['Description'] = metrics.description
-        elif 'Description' not in metadata:
-            # Preserve mode: only add if no description exists
-            metadata['Description'] = metrics.description
-    
-    # Only suggest rating if none exists (rating 0 means no rating in ON1)
+
+    # Add rating suggestion if no rating exists
     existing_rating = metadata.get('Rating', 0)
     if existing_rating == 0:
-        # Suggest rating based on overall score
         if metrics.overall_quality >= 0.8:
             suggested_rating = 5
         elif metrics.overall_quality >= 0.6:
@@ -158,10 +141,24 @@ def write_on1_metadata(filepath, decision, metrics, confidence, issues, override
             suggested_rating = 2
         else:
             suggested_rating = 1
-        
         culler_keywords.append(f'CullerSuggestedRating:{suggested_rating}')
-    
-    # Store technical analysis in separate field (not keywords)
+
+    # Combine all keywords
+    new_keywords.extend(culler_keywords)
+    metadata['Keywords'] = new_keywords
+
+    # Handle description
+    if override:
+        # Always replace with AI description in override mode
+        if hasattr(metrics, 'description') and metrics.description:
+            metadata['Description'] = metrics.description
+    else:
+        # Only add if empty
+        if not metadata.get('Description'):
+            if hasattr(metrics, 'description') and metrics.description:
+                metadata['Description'] = metrics.description
+
+    # Store technical analysis
     analysis = {
         'decision': decision,
         'confidence': f'{confidence:.2f}',
@@ -172,7 +169,6 @@ def write_on1_metadata(filepath, decision, metrics, confidence, issues, override
         'overall_quality': f'{metrics.overall_quality:.2f}'
     }
 
-    # Add enhanced focus information if available
     if hasattr(metrics, 'enhanced_focus') and metrics.enhanced_focus:
         ef = metrics.enhanced_focus
         analysis['enhanced_focus'] = {
@@ -185,15 +181,12 @@ def write_on1_metadata(filepath, decision, metrics, confidence, issues, override
         }
 
     metadata['PhotoCullerAnalysis'] = analysis
-    
-    # Only add the basic culler tags to keywords (clean and searchable)
-    existing_keywords.extend(culler_keywords)
-    metadata['Keywords'] = existing_keywords
-    
+
     # Update metadata date
     metadata['MetadataDate'] = datetime.now().strftime('%a %b %d %H:%M:%S %Y')
-    metadata['MetadataDateOffset'] = 0
-    
+    if 'MetadataDateOffset' not in metadata:
+        metadata['MetadataDateOffset'] = 0
+
     # Write back
     try:
         with open(on1_file, 'w') as f:

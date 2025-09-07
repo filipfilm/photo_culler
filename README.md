@@ -14,12 +14,12 @@ A smart photo culling system that combines traditional computer vision with mode
 - **RAW Support**: Handles NEF, CR2, ARW, and other RAW formats
 - **Intelligent Decisions**: Categorizes photos as Keep, Delete, or Review
 - **Metadata Integration**:
-  - ON1 Photo RAW support with .on1 sidecar files
+  - ON1 Photo RAW support with .on1 sidecar files (Main workflow)
   - Universal XMP metadata for Lightroom, Capture One, Bridge and more
 - **Multiple Culling Tools**:
+  - ON1-specific metadata integration (Primary method)
+  - Universal metadata support for all photo apps  
   - Standard culling with CSV output
-  - ON1-specific metadata integration  
-  - Universal metadata support for all photo apps
 
 
 ## Quick Start 🚀
@@ -31,23 +31,29 @@ pip install -r requirements_photo.txt
 
 2. **Basic Usage**:
 ```bash
-# Accurate mode with GPU (default)
-python cli.py /path/to/photos --cache-dir ~/.cache
+# ON1 Photo RAW culling (primary workflow, preserves existing metadata)
+python culler_on1.py /path/to/photos --cache-dir ~/.cache
 
-# Fast mode for quick triage  
-python cli.py /path/to/photos --fast --workers 8
+# Fast mode for quick triage (ON1 workflow)
+python culler_on1.py /path/to/photos --fast --workers 8
 
 # Force CPU for vision model
-python cli.py /path/to/photos --force-cpu
+python culler_on1.py /path/to/photos --force-cpu
+
+# Universal metadata culling (works with Lightroom, Bridge, etc.)
+python culler_universal.py /path/to/photos --cache-dir ~/.cache
 ```
 
 3. **View Results**:
 ```bash
-# Save detailed JSON results
-python cli.py /photos --output results.json
+# Save detailed JSON results (universal approach)
+python culler_universal.py /photos --output results.json
 
-# Move files marked for deletion
-python cli.py /photos --move-deletes
+# Move files marked for deletion (ON1 approach)
+python culler_on1.py /photos --move-deletes
+
+# Move files marked for deletion (universal approach)
+python culler_universal.py /photos --move-deletes
 ```
 
 4. **Advanced Usage with Metadata**:
@@ -58,11 +64,17 @@ python culler_on1.py /photos --cache-dir ~/.cache
 # Universal metadata culling (works with Lightroom, Bridge, etc.)
 python culler_universal.py /photos --cache-dir ~/.cache
 
-# Use Ollama instead of CLIP for vision analysis
-python cli.py /photos --use-ollama
+# Use Ollama instead of CLIP for vision analysis (ON1)
+python culler_on1.py /photos --use-ollama
 
-# Use specific Ollama model
-python cli.py /photos --use-ollama --ollama-model llava:13b
+# Use specific Ollama model (ON1)
+python culler_on1.py /photos --use-ollama --ollama-model llava:13b
+
+# Use Ollama instead of CLIP for vision analysis (universal)
+python culler_universal.py /photos --use-ollama
+
+# Use specific Ollama model (universal)
+python culler_universal.py /photos --use-ollama --ollama-model llava:13b
 ```
 
 ## Processing Modes 🔄
@@ -84,17 +96,20 @@ python cli.py /photos --use-ollama --ollama-model llava:13b
 ## Examples 📋
 
 ```bash
-# Process wedding photos with accurate mode
-python cli.py ~/Photos/Wedding2024 --cache-dir ~/.cache --output wedding_results.json
+# Process wedding photos with ON1 metadata (primary workflow)
+python culler_on1.py ~/Photos/Wedding2024 --cache-dir ~/.cache
 
-# Quick triage of 10,000 photos
-python cli.py ~/Photos/Massive_Collection --fast --workers 8 --move-deletes
+# Quick triage of 10,000 photos with ON1 workflow
+python culler_on1.py ~/Photos/Massive_Collection --fast --workers 8
 
-# Process only RAW files  
-python cli.py ~/Photos --extensions nef,cr2,arw --batch-size 16
+# Process only RAW files with ON1 workflow  
+python culler_on1.py ~/Photos --extensions nef,cr2,arw
 
-# Conservative CPU-only processing
-python cli.py ~/Photos --force-cpu --verbose
+# Conservative CPU-only processing with ON1
+python culler_on1.py ~/Photos --force-cpu --verbose
+
+# Universal metadata approach (works with Lightroom, Bridge)
+python culler_universal.py ~/Photos/Wedding2024 --cache-dir ~/.cache
 ```
 
 ## Configuration Options ⚙️
@@ -144,9 +159,10 @@ ac_controller/
 ├── extractor.py           # RAW thumbnail extraction  
 ├── decision.py            # Culling decision logic
 ├── batch.py              # Batch processing with caching
-├── cli.py                # Command-line interface
+├── culler_on1.py         # ON1 Photo RAW culling
+├── culler_universal.py   # Universal metadata culling  
 ├── requirements_photo.txt # Python dependencies
-└── test_photo_culler.py  # System tests
+└── test_on1_xmp.py       # System tests
 ```
 
 ## Dependencies 📦
@@ -277,6 +293,22 @@ results = culler.process_folder_batch(Path("/photos"))
 for result in results['Delete']:
     print(f"Delete: {result.filepath} ({result.confidence:.2f})")
 ```
+
+### ON1 Workflow Best Practices:
+When using `culler_on1.py`:
+
+- **Process in ON1 Photo RAW** after running culler to see metadata keywords
+- Use `--move-deletes` to automatically move deletion candidates to `_culled_deletes/`
+- Search for keywords like `PhotoCuller:Delete` in ON1 to identify candidates
+- Review high-confidence deletion candidates (confidence > 0.7) before deleting
+
+### Universal Workflow Best Practices:
+When using `culler_universal.py`:
+
+- Use with any photo app (Lightroom, Bridge, Capture One)
+- Metadata is stored in `.xmp` sidecar files
+- Preserve existing ratings, keywords and descriptions  
+- Search for metadata like `PhotoCuller:Delete` in your photo app
 
 ## License 📄
 

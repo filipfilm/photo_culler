@@ -6,7 +6,9 @@ from pathlib import Path
 
 def check_xmp_files():
     """Check XMP files in test directory"""
-    test_dir = Path("/Users/filipdobosz/Desktop/test")
+    # This path is for testing purposes only - users should modify this to their test folder
+    test_dir = Path("./test")  # Default location for testing
+    
     
     xmp_files = list(test_dir.glob("*.xmp"))
     

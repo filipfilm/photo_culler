@@ -5,7 +5,7 @@ A smart photo culling system that combines traditional computer vision with mode
 ## Features ✨
 
 - **Dual Processing Modes**:
-  - **Accurate Mode** (default): Uses CLIP vision model for 85-90% accuracy on focus detection
+  - **Accurate Mode** (default): Uses CLIP or Ollama vision model for 85-90% accuracy on focus detection
   - **Fast Mode**: Traditional CV for quick triage (200ms/image vs 1s/image)
 
 - **Smart Caching**: Never reprocess the same file/mode combination
@@ -13,6 +13,14 @@ A smart photo culling system that combines traditional computer vision with mode
 - **Graceful Fallback**: Auto-falls back to fast mode if GPU/CLIP unavailable
 - **RAW Support**: Handles NEF, CR2, ARW, and other RAW formats
 - **Intelligent Decisions**: Categorizes photos as Keep, Delete, or Review
+- **Metadata Integration**:
+  - ON1 Photo RAW support with .on1 sidecar files
+  - Universal XMP metadata for Lightroom, Capture One, Bridge and more
+- **Multiple Culling Tools**:
+  - Standard culling with CSV output
+  - ON1-specific metadata integration  
+  - Universal metadata support for all photo apps
+
 
 ## Quick Start 🚀
 
@@ -40,6 +48,21 @@ python cli.py /photos --output results.json
 
 # Move files marked for deletion
 python cli.py /photos --move-deletes
+```
+
+4. **Advanced Usage with Metadata**:
+```bash
+# ON1 Photo RAW culling (preserves existing metadata)
+python culler_on1.py /photos --cache-dir ~/.cache
+
+# Universal metadata culling (works with Lightroom, Bridge, etc.)
+python culler_universal.py /photos --cache-dir ~/.cache
+
+# Use Ollama instead of CLIP for vision analysis
+python cli.py /photos --use-ollama
+
+# Use specific Ollama model
+python cli.py /photos --use-ollama --ollama-model llava:13b
 ```
 
 ## Processing Modes 🔄
@@ -86,6 +109,8 @@ python cli.py ~/Photos --force-cpu --verbose
 | `--move-deletes` | False | Move deletion candidates to _culled_deletes/ |
 | `--extensions` | nef,cr2,arw,jpg,jpeg | File extensions to process |
 | `--output` | None | Save results to JSON file |
+| `--use-ollama` | False | Use Ollama vision model instead of CLIP |
+| `--ollama-model` | `llava:7b` | Which Ollama model to use |
 
 ## Decision Logic 🤔
 
@@ -214,6 +239,22 @@ Processing stats:
 - Reduce batch size: `--batch-size 4`
 - Enable caching: `--cache-dir ~/.cache`
 
+### Ollama Issues:
+
+**"Cannot connect to Ollama"**
+- Make sure Ollama is running: `ollama serve`
+- Check if it's accessible: `curl http://localhost:11434/api/tags`
+
+**"Model not found"**
+- List available models: `ollama list`
+- Pull the model if missing: `ollama pull llava:7b`
+
+**"Ollama query failed"**
+- Check Ollama logs: `ollama logs`
+- Restart Ollama service
+- Try a different model
+
+
 ## Advanced Usage 🎯
 
 ### Custom Decision Thresholds:
@@ -244,3 +285,16 @@ MIT License - Feel free to use and modify for your photo workflow!
 ---
 
 **Pro Tip**: Start with fast mode on large collections, then use accurate mode on the "Review" category for final decisions. This hybrid approach gives you the best of both worlds! 🎯
+
+## Repository Status 🔍
+
+The repository is designed to be public and does not contain any personal information. All paths in example code have been updated for general use.
+
+Please review the following before making this repository public:
+
+1. **Test Files**: Remove any personal test data from `test/` directory
+2. **Configuration files**: Ensure no private information in `.env` or config files (none currently exist)
+3. **API Keys**: This tool does not use any external API keys
+4. **User Paths**: All user-specific paths in example code have been replaced with generic references
+
+You can safely make this repository public as it contains only the core tool functionality.

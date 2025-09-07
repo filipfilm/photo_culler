@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import time
+from tqdm import tqdm
 from extractor import RawThumbnailExtractor
 from analyzer import HybridAnalyzer
 try:
@@ -188,85 +189,86 @@ class BatchCuller:
             # Batch processing for vision model
             processed = 0
             
-            for i in range(0, len(files), self.batch_size):
-                batch_files = files[i:i + self.batch_size]
-                batch_images = []
-                batch_paths = []
-                cached_results = []
-                
-                # Extract thumbnails and check cache
-                for filepath in batch_files:
-                    file_hash = self._get_file_hash(filepath)
-                    cache_key = f"{file_hash}_{self.mode.value}"
+            with tqdm(total=len(files), desc="Processing images", unit="img") as pbar:
+                for i in range(0, len(files), self.batch_size):
+                    batch_files = files[i:i + self.batch_size]
+                    batch_images = []
+                    batch_paths = []
+                    cached_results = []
                     
-                    if cache_key in self.results_cache:
-                        cached = self.results_cache[cache_key]
-                        result = CullResult(
-                            filepath=filepath,
-                            decision=cached['decision'],
-                            confidence=cached['confidence'],
-                            metrics=ImageMetrics(
-                                blur_score=cached['metrics']['blur_score'],
-                                exposure_score=cached['metrics']['exposure_score'],
-                                composition_score=cached['metrics']['composition_score'],
-                                overall_quality=cached['metrics']['overall_quality'],
-                                processing_mode=ProcessingMode(cached['metrics']['processing_mode']),
-                                keywords=cached['metrics'].get('keywords'),
-                                description=cached['metrics'].get('description'),
-                                enhanced_focus=cached['metrics'].get('enhanced_focus')
-                            ),
-                            issues=cached['issues'],
-                            processing_ms=cached['processing_ms'],
-                            mode=ProcessingMode(cached['mode'])
-                        )
-                        cached_results.append(result)
-                    else:
-                        image = self.extractor.extract(filepath)
-                        if image:
-                            batch_images.append(image)
-                            batch_paths.append(filepath)
-                        else:
-                            results['Failed'].append(filepath)
-                
-                # Add cached results
-                for result in cached_results:
-                    results[result.decision].append(result)
-                
-                # Process uncached batch
-                if batch_images:
-                    start = time.perf_counter()
-                    metrics_list = self.analyzer.analyze_batch(batch_images)
-                    batch_time = (time.perf_counter() - start) * 1000
-                    
-                    for filepath, metrics in zip(batch_paths, metrics_list):
-                        processing_ms = int(batch_time / len(batch_images))
-                        result = self.decision_engine.decide(filepath, metrics, processing_ms)
-                        results[result.decision].append(result)
-                        
-                        # Cache - INCLUDE keywords and description
+                    # Extract thumbnails and check cache
+                    for filepath in batch_files:
                         file_hash = self._get_file_hash(filepath)
                         cache_key = f"{file_hash}_{self.mode.value}"
-                        self.results_cache[cache_key] = {
-                            'filepath': str(filepath),
-                            'decision': result.decision,
-                            'confidence': result.confidence,
-                            'metrics': {
-                                'blur_score': metrics.blur_score,
-                                'exposure_score': metrics.exposure_score,
-                                'composition_score': metrics.composition_score,
-                                'overall_quality': metrics.overall_quality,
-                                'processing_mode': metrics.processing_mode.value,
-                                'keywords': metrics.keywords,
-                                'description': metrics.description,
-                                'enhanced_focus': metrics.enhanced_focus
-                            },
-                            'issues': result.issues,
-                            'processing_ms': result.processing_ms,
-                            'mode': result.mode.value
-                        }
-                
-                processed += len(batch_files)
-                self.logger.info(f"Processed {processed}/{len(files)}")
+                    
+                        if cache_key in self.results_cache:
+                            cached = self.results_cache[cache_key]
+                            result = CullResult(
+                                filepath=filepath,
+                                decision=cached['decision'],
+                                confidence=cached['confidence'],
+                                metrics=ImageMetrics(
+                                    blur_score=cached['metrics']['blur_score'],
+                                    exposure_score=cached['metrics']['exposure_score'],
+                                    composition_score=cached['metrics']['composition_score'],
+                                    overall_quality=cached['metrics']['overall_quality'],
+                                    processing_mode=ProcessingMode(cached['metrics']['processing_mode']),
+                                    keywords=cached['metrics'].get('keywords'),
+                                    description=cached['metrics'].get('description'),
+                                    enhanced_focus=cached['metrics'].get('enhanced_focus')
+                                ),
+                                issues=cached['issues'],
+                                processing_ms=cached['processing_ms'],
+                                mode=ProcessingMode(cached['mode'])
+                            )
+                            cached_results.append(result)
+                        else:
+                            image = self.extractor.extract(filepath)
+                            if image:
+                                batch_images.append(image)
+                                batch_paths.append(filepath)
+                            else:
+                                results['Failed'].append(filepath)
+                    
+                    # Add cached results
+                    for result in cached_results:
+                        results[result.decision].append(result)
+                    
+                    # Process uncached batch
+                    if batch_images:
+                        start = time.perf_counter()
+                        metrics_list = self.analyzer.analyze_batch(batch_images)
+                        batch_time = (time.perf_counter() - start) * 1000
+                        
+                        for filepath, metrics in zip(batch_paths, metrics_list):
+                            processing_ms = int(batch_time / len(batch_images))
+                            result = self.decision_engine.decide(filepath, metrics, processing_ms)
+                            results[result.decision].append(result)
+                            
+                            # Cache - INCLUDE keywords and description
+                            file_hash = self._get_file_hash(filepath)
+                            cache_key = f"{file_hash}_{self.mode.value}"
+                            self.results_cache[cache_key] = {
+                                'filepath': str(filepath),
+                                'decision': result.decision,
+                                'confidence': result.confidence,
+                                'metrics': {
+                                    'blur_score': metrics.blur_score,
+                                    'exposure_score': metrics.exposure_score,
+                                    'composition_score': metrics.composition_score,
+                                    'overall_quality': metrics.overall_quality,
+                                    'processing_mode': metrics.processing_mode.value,
+                                    'keywords': metrics.keywords,
+                                    'description': metrics.description,
+                                    'enhanced_focus': metrics.enhanced_focus
+                                },
+                                'issues': result.issues,
+                                'processing_ms': result.processing_ms,
+                                'mode': result.mode.value
+                            }
+                    
+                    processed += len(batch_files)
+                    pbar.update(len(batch_files))
                 
         else:
             # Fast mode - use parallel processing

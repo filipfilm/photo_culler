@@ -3,7 +3,9 @@
     "allow": [
       "Bash(python:*)",
       "Bash(sed:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(timeout:*)",
+      "Bash(gtimeout:*)"
     ],
     "deny": [],
     "ask": []

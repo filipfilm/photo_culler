@@ -267,10 +267,11 @@ def print_result(filepath, decision, confidence, issues, metrics):
 @click.option('--use-ollama', is_flag=True, help='Use Ollama vision model instead of CLIP')
 @click.option('--ollama-model', default='llava:13b', help='Ollama model to use')
 @click.option('--verbose', is_flag=True, help='Show processing details')
+@click.option('--detail', is_flag=True, help='Show individual file results during processing')
 @click.option('--extensions', default='nef,cr2,arw,jpg,jpeg', help='File extensions to process')
 @click.option('--override', is_flag=True, help='Override ALL existing keywords and descriptions (preserves ratings only)')
 @click.option('--learning', is_flag=True, help='Enable adaptive learning mode')
-def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama_model, verbose, extensions, override, learning):
+def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama_model, verbose, detail, extensions, override, learning):
     """
     All-in-one photo culler for ON1 Photo RAW:
     
@@ -341,54 +342,48 @@ def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama
     
     print(f"🔍 Found {len(files)} files to process\n")
     
-    # Process each file
-    results = {'Keep': [], 'Delete': [], 'Review': [], 'Failed': []}
+    # Process files with progress bar (handled in BatchCuller)
+    print("🚀 Starting batch processing with progress tracking...")
+    results = culler.process_folder_batch(folder, ext_list)
+    
+    # Post-process results for ON1 metadata and CSV
     on1_updated = 0
     
-    for i, filepath in enumerate(files, 1):
-        print(f"[{i:3d}/{len(files)}] Processing {filepath.name}...")
-        
-        try:
-            result = culler.process_image(filepath)
+    print("\n📝 Writing metadata and CSV results...")
+    for decision, items in results.items():
+        if decision == 'Failed':
+            continue
             
-            if result:
-                decision = result.decision
-                confidence = result.confidence
-                issues = result.issues
-                metrics = result.metrics
-                processing_ms = result.processing_ms
-                
-                # Add to results
-                results[decision].append(result)
-                
-                # Print result
+        for result in items:
+            filepath = result.filepath
+            confidence = result.confidence
+            issues = result.issues
+            metrics = result.metrics
+            processing_ms = result.processing_ms
+            
+            # Print result only if detail flag is enabled
+            if detail:
                 print_result(filepath, decision, confidence, issues, metrics)
+            
+            # Write ON1 metadata (unless fast mode)
+            if not fast:
+                on1_file = filepath.with_suffix('.on1')
+                file_existed = on1_file.exists()
                 
-                # Write ON1 metadata (unless fast mode)
-                if not fast:
-                    on1_file = filepath.with_suffix('.on1')
-                    file_existed = on1_file.exists()
-                    
-                    if write_on1_metadata(filepath, decision, metrics, confidence, issues, override):
-                        on1_updated += 1
+                if write_on1_metadata(filepath, decision, metrics, confidence, issues, override):
+                    on1_updated += 1
+                    if detail:
                         if file_existed:
                             action = "Overrode" if override else "Updated"
                             print(f"   ✅ {action} ON1 metadata")
                         else:
                             print(f"   ✅ Created ON1 metadata file")
-                    else:
+                else:
+                    if detail:
                         print(f"   ❌ Failed to write ON1 metadata")
-                
-                # Append to CSV
-                append_to_csv(csv_path, filepath, decision, confidence, issues, metrics, processing_ms)
-                
-            else:
-                print(f"❌ Failed to process {filepath.name}")
-                results['Failed'].append(filepath)
-                
-        except Exception as e:
-            print(f"❌ Error processing {filepath.name}: {e}")
-            results['Failed'].append(filepath)
+            
+            # Append to CSV
+            append_to_csv(csv_path, filepath, decision, confidence, issues, metrics, processing_ms)
     
     # Save session data (adaptive learning, caches, etc.)
     try:

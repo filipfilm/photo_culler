@@ -27,6 +27,7 @@ An intelligent photo culling system that learns your photography style, provides
 
 - **Smart Caching**: Never reprocess the same file/mode combination
 - **Batch Processing**: Vision model processes images efficiently with intelligent batching
+- **Progress Tracking**: Real-time progress bars with ETA estimation using tqdm
 - **Graceful Fallback**: Auto-falls back through multiple analysis methods if components unavailable
 - **Enhanced RAW Support**: Proper thumbnail extraction for NEF, CR2, ARW, and other RAW formats
 - **Intelligent Decisions**: Categorizes photos as Keep, Delete, or Review with confidence scoring

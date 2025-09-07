@@ -16,6 +16,7 @@ class ImageMetrics:
     processing_mode: ProcessingMode
     keywords: Optional[List[str]] = None  # AI-generated keywords
     description: Optional[str] = None  # Natural language description
+    enhanced_focus: Optional[Dict] = None  # Enhanced focus analysis results
     
 @dataclass
 class CullResult:

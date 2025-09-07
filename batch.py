@@ -4,7 +4,17 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 import time
 from extractor import RawThumbnailExtractor
 from analyzer import HybridAnalyzer
-from decision import CullingDecisionEngine
+try:
+    from adaptive_decision_engine import AdaptiveDecisionEngine
+    ADAPTIVE_ENGINE_AVAILABLE = True
+except ImportError:
+    ADAPTIVE_ENGINE_AVAILABLE = False
+
+try:
+    from decision import CullingDecisionEngine
+    BASIC_ENGINE_AVAILABLE = True
+except ImportError:
+    BASIC_ENGINE_AVAILABLE = False
 from models import ImageMetrics, CullResult, ProcessingMode
 import logging
 from PIL import Image
@@ -13,13 +23,14 @@ import hashlib
 
 
 class BatchCuller:
-    def __init__(self, cache_dir: Optional[Path] = None, 
+    def __init__(self, cache_dir: Optional[Path] = None,
                  mode: ProcessingMode = ProcessingMode.ACCURATE,
                  max_workers: int = 4,
                  batch_size: int = 8,
                  force_cpu: bool = False,
                  use_ollama: bool = False,
-                 ollama_model: str = "llava:13b"):
+                 ollama_model: str = "llava:13b",
+                 learning_enabled: bool = False):
         
         self.cache_dir = cache_dir
         self.mode = mode
@@ -27,6 +38,7 @@ class BatchCuller:
         self.batch_size = batch_size
         self.use_ollama = use_ollama
         self.ollama_model = ollama_model
+        self.learning_enabled = learning_enabled
         self.logger = logging.getLogger(__name__)
         
         # Initialize components
@@ -37,7 +49,17 @@ class BatchCuller:
             use_ollama=use_ollama,
             ollama_model=ollama_model
         )
-        self.decision_engine = CullingDecisionEngine()
+        # Use adaptive decision engine if available and learning is enabled
+        if ADAPTIVE_ENGINE_AVAILABLE and learning_enabled:
+            self.decision_engine = AdaptiveDecisionEngine(learning_enabled=True)
+            self.logger.info("Using adaptive decision engine with learning")
+        elif BASIC_ENGINE_AVAILABLE:
+            self.decision_engine = CullingDecisionEngine()
+            if learning_enabled and not ADAPTIVE_ENGINE_AVAILABLE:
+                self.logger.warning("Adaptive decision engine not available, using basic engine")
+            self.logger.info("Using basic decision engine")
+        else:
+            raise ImportError("No decision engine available. Please ensure decision.py exists.")
         
         # Results cache
         if cache_dir:
@@ -91,7 +113,10 @@ class BatchCuller:
                     exposure_score=cached['metrics']['exposure_score'],
                     composition_score=cached['metrics']['composition_score'],
                     overall_quality=cached['metrics']['overall_quality'],
-                    processing_mode=ProcessingMode(cached['metrics']['processing_mode'])
+                    processing_mode=ProcessingMode(cached['metrics']['processing_mode']),
+                    keywords=cached['metrics'].get('keywords'),
+                    description=cached['metrics'].get('description'),
+                    enhanced_focus=cached['metrics'].get('enhanced_focus')
                 ),
                 issues=cached['issues'],
                 processing_ms=cached['processing_ms'],
@@ -108,9 +133,16 @@ class BatchCuller:
         
         # Decide
         processing_ms = int((time.perf_counter() - start) * 1000)
-        result = self.decision_engine.decide(filepath, metrics, processing_ms)
         
-        # Cache result
+        if ADAPTIVE_ENGINE_AVAILABLE and self.learning_enabled and isinstance(self.decision_engine, AdaptiveDecisionEngine):
+            # Pass enhanced focus data to adaptive engine if available
+            focus_analysis = getattr(metrics, 'enhanced_focus', None)
+            result = self.decision_engine.decide(filepath, metrics, processing_ms, focus_analysis)
+        else:
+            # Basic decision engine call
+            result = self.decision_engine.decide(filepath, metrics, processing_ms)
+        
+        # Cache result - INCLUDE keywords and description
         self.results_cache[cache_key] = {
             'filepath': str(filepath),
             'decision': result.decision,
@@ -120,7 +152,10 @@ class BatchCuller:
                 'exposure_score': metrics.exposure_score,
                 'composition_score': metrics.composition_score,
                 'overall_quality': metrics.overall_quality,
-                'processing_mode': metrics.processing_mode.value
+                'processing_mode': metrics.processing_mode.value,
+                'keywords': metrics.keywords,
+                'description': metrics.description,
+                'enhanced_focus': metrics.enhanced_focus
             },
             'issues': result.issues,
             'processing_ms': result.processing_ms,
@@ -175,7 +210,10 @@ class BatchCuller:
                                 exposure_score=cached['metrics']['exposure_score'],
                                 composition_score=cached['metrics']['composition_score'],
                                 overall_quality=cached['metrics']['overall_quality'],
-                                processing_mode=ProcessingMode(cached['metrics']['processing_mode'])
+                                processing_mode=ProcessingMode(cached['metrics']['processing_mode']),
+                                keywords=cached['metrics'].get('keywords'),
+                                description=cached['metrics'].get('description'),
+                                enhanced_focus=cached['metrics'].get('enhanced_focus')
                             ),
                             issues=cached['issues'],
                             processing_ms=cached['processing_ms'],
@@ -205,7 +243,7 @@ class BatchCuller:
                         result = self.decision_engine.decide(filepath, metrics, processing_ms)
                         results[result.decision].append(result)
                         
-                        # Cache
+                        # Cache - INCLUDE keywords and description
                         file_hash = self._get_file_hash(filepath)
                         cache_key = f"{file_hash}_{self.mode.value}"
                         self.results_cache[cache_key] = {
@@ -217,7 +255,10 @@ class BatchCuller:
                                 'exposure_score': metrics.exposure_score,
                                 'composition_score': metrics.composition_score,
                                 'overall_quality': metrics.overall_quality,
-                                'processing_mode': metrics.processing_mode.value
+                                'processing_mode': metrics.processing_mode.value,
+                                'keywords': metrics.keywords,
+                                'description': metrics.description,
+                                'enhanced_focus': metrics.enhanced_focus
                             },
                             'issues': result.issues,
                             'processing_ms': result.processing_ms,
@@ -272,3 +313,28 @@ class BatchCuller:
         if all_results:
             avg_time = sum(r.processing_ms for r in all_results) / len(all_results)
             self.logger.info(f"Average processing time: {avg_time:.0f}ms")
+    
+    def save_session(self):
+        """Save session data and learning preferences"""
+        # Save results cache
+        self._save_cache()
+        
+        # Save adaptive learning session if using adaptive engine
+        if ADAPTIVE_ENGINE_AVAILABLE and hasattr(self.decision_engine, 'save_session'):
+            try:
+                self.decision_engine.save_session()
+                self.logger.info("Adaptive learning session saved")
+            except Exception as e:
+                self.logger.warning(f"Failed to save adaptive learning session: {e}")
+    
+    def get_session_summary(self) -> Dict:
+        """Get session summary including adaptive learning insights"""
+        summary = {}
+        
+        if ADAPTIVE_ENGINE_AVAILABLE and hasattr(self.decision_engine, 'get_session_summary'):
+            try:
+                summary = self.decision_engine.get_session_summary()
+            except Exception as e:
+                self.logger.warning(f"Failed to get session summary: {e}")
+        
+        return summary

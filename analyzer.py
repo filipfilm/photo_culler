@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 from PIL import Image
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Dict
 import time
 import logging
 from pathlib import Path
@@ -16,16 +16,29 @@ except ImportError:
     CLIP_AVAILABLE = False
 
 try:
-    from ollama_vision import OllamaVisionAnalyzer
+    from ollama_vision import OllamaVisionAnalyzer, ImprovedOllamaVisionAnalyzer
     OLLAMA_AVAILABLE = True
+    IMPROVED_OLLAMA_AVAILABLE = True
 except ImportError:
-    OLLAMA_AVAILABLE = False
+    try:
+        from ollama_vision import OllamaVisionAnalyzer
+        OLLAMA_AVAILABLE = True
+        IMPROVED_OLLAMA_AVAILABLE = False
+    except ImportError:
+        OLLAMA_AVAILABLE = False
+        IMPROVED_OLLAMA_AVAILABLE = False
 
 try:
     from subject_detector import SubjectDetector
     SUBJECT_DETECTOR_AVAILABLE = True
 except ImportError:
     SUBJECT_DETECTOR_AVAILABLE = False
+
+try:
+    from enhanced_focus_analyzer import EnhancedFocusAnalyzer
+    ENHANCED_FOCUS_AVAILABLE = True
+except ImportError:
+    ENHANCED_FOCUS_AVAILABLE = False
 
 VISION_AVAILABLE = CLIP_AVAILABLE or OLLAMA_AVAILABLE
 
@@ -36,22 +49,30 @@ class TechnicalAnalyzer:
         self.blur_threshold = 100
         self.highlight_clip_percent = 0.01
         self.shadow_clip_percent = 0.01
-        
+
+        # Initialize enhanced focus analyzer if available
+        self.enhanced_focus = None
+        if ENHANCED_FOCUS_AVAILABLE:
+            try:
+                self.enhanced_focus = EnhancedFocusAnalyzer()
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Failed to initialize enhanced focus analyzer: {e}")
+
     def analyze(self, image: Image.Image) -> ImageMetrics:
         """Return metrics using traditional CV"""
         # Resize for consistent processing
         image.thumbnail((800, 800), Image.Resampling.LANCZOS)
-        
+
         rgb = np.array(image.convert('RGB'))
         gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-        
-        blur = self._blur_score(gray)
+
+        blur, enhanced_focus_data = self._blur_score(image, gray)
         exposure = self._exposure_score(rgb)
         composition = self._composition_score(gray)
-        
+
         # Weighted overall
         overall = blur * 0.5 + exposure * 0.3 + composition * 0.2
-        
+
         return ImageMetrics(
             blur_score=blur,
             exposure_score=exposure,
@@ -59,23 +80,43 @@ class TechnicalAnalyzer:
             overall_quality=overall,
             processing_mode=ProcessingMode.FAST,
             keywords=None,  # Traditional CV doesn't generate keywords
-            description=None  # Traditional CV doesn't generate descriptions
+            description=None,  # Traditional CV doesn't generate descriptions
+            enhanced_focus=enhanced_focus_data
         )
     
-    def _blur_score(self, gray: np.ndarray) -> float:
+    def _blur_score(self, image: Image.Image, gray: np.ndarray) -> Tuple[float, Optional[Dict]]:
         """0=blurry, 1=sharp using multiple focus metrics"""
+
+        # Try enhanced focus analyzer first if available
+        if self.enhanced_focus:
+            try:
+                focus_result = self.enhanced_focus.analyze_focus(image)
+                enhanced_score = focus_result.get("focus_score", 0.5)
+                # Use enhanced score as primary, but blend with traditional for robustness
+                traditional_score = self._traditional_blur_score(gray)
+                combined_score = (enhanced_score * 0.7 + traditional_score * 0.3)
+                return combined_score, focus_result
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Enhanced focus analysis failed, falling back to traditional: {e}")
+
+        # Fall back to traditional method
+        traditional_score = self._traditional_blur_score(gray)
+        return traditional_score, None
+
+    def _traditional_blur_score(self, gray: np.ndarray) -> float:
+        """Traditional blur scoring method"""
         # Multiple focus detection methods for better accuracy
-        
+
         # 1. Laplacian variance (edge-based)
         lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
         lap_score = np.clip(lap_var / 500, 0, 1)  # Increased threshold for better sensitivity
-        
+
         # 2. Sobel gradient magnitude (directional edges)
         sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
         sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
         sobel_var = np.var(np.sqrt(sobelx**2 + sobely**2))
         sobel_score = np.clip(sobel_var / 1000, 0, 1)
-        
+
         # 3. Normalized Variance of Laplacian (more robust to different image types)
         norm_lap = cv2.Laplacian(gray, cv2.CV_64F)
         mean_val = gray.mean()
@@ -84,19 +125,19 @@ class TechnicalAnalyzer:
             nvol_score = np.clip(nvol / 10, 0, 1)
         else:
             nvol_score = 0
-        
+
         # 4. High-frequency content analysis
         f_transform = np.fft.fft2(gray)
         f_shift = np.fft.fftshift(f_transform)
         magnitude = np.abs(f_shift)
-        
+
         # Focus on high-frequency components (sharp details)
         h, w = gray.shape
         center_h, center_w = h//2, w//2
         high_freq_mask = np.zeros((h, w))
         high_freq_mask[center_h-h//4:center_h+h//4, center_w-w//4:center_w+w//4] = 1
         high_freq_mask = 1 - high_freq_mask  # Invert to get high frequencies
-        
+
         high_freq_energy = np.sum(magnitude * high_freq_mask)
         total_energy = np.sum(magnitude)
         if total_energy > 0:
@@ -104,10 +145,10 @@ class TechnicalAnalyzer:
             hf_score = np.clip(hf_ratio * 5, 0, 1)  # Scale appropriately
         else:
             hf_score = 0
-        
+
         # Combine scores with weights (Laplacian and Sobel are most reliable)
         combined_score = (lap_score * 0.4 + sobel_score * 0.3 + nvol_score * 0.2 + hf_score * 0.1)
-        
+
         return combined_score
     
     def _exposure_score(self, rgb: np.ndarray) -> float:
@@ -160,9 +201,14 @@ class VisionAnalyzer:
             # Try Ollama first if requested or if CLIP unavailable
             if OLLAMA_AVAILABLE:
                 try:
-                    self.analyzer = OllamaVisionAnalyzer(model=ollama_model)
+                    # Use improved analyzer if available, fall back to basic one
+                    if IMPROVED_OLLAMA_AVAILABLE:
+                        self.analyzer = ImprovedOllamaVisionAnalyzer(model=ollama_model)
+                        self.logger.info(f"Using Improved Ollama vision model: {ollama_model}")
+                    else:
+                        self.analyzer = OllamaVisionAnalyzer(model=ollama_model)
+                        self.logger.info(f"Using Ollama vision model: {ollama_model}")
                     self.use_ollama = True
-                    self.logger.info(f"Using Ollama vision model: {ollama_model}")
                     return
                 except Exception as e:
                     self.logger.warning(f"Failed to initialize Ollama: {e}")

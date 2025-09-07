@@ -37,34 +37,64 @@ def read_on1_metadata(on1_file):
 def write_on1_metadata(filepath, decision, metrics, confidence, issues, override=False):
     """Write to ON1 .on1 sidecar file preserving existing metadata"""
     on1_file = filepath.with_suffix('.on1')
-    
+
     # Read existing data or create new structure
     data = read_on1_metadata(on1_file)
     if not data:
-        # Create a new ON1 structure
+        # Create a proper ON1 structure that matches what ON1 expects
+        import uuid
+        photo_guid = str(uuid.uuid4())
+
         data = {
-            "version": "2.0",
+            "version": 2025,  # ON1 uses numeric version
+            "type": 1,        # Root level type
             "photos": {
-                str(filepath.name): {
-                    "metadata": {}
+                photo_guid: {
+                    "name": str(filepath.name),  # Filename in name field
+                    "type": 2,                   # Photo type
+                    "guid_locked": False,
+                    "face_scan_timestamp": None,
+                    "blurhash": None,
+                    "ml_classes": {"classifications": []},
+                    "metadata": {
+                        # Basic metadata that ON1 expects
+                        "Description": "",
+                        "Keywords": [],
+                        "MetadataDate": "",
+                        "MetadataDateOffset": 0,
+                        "Orientation": 1,
+                        "Resolution": {"h": 72, "v": 72}
+                    }
                 }
             }
         }
     
     # Find or create the photo entry
     photos = data.get('photos', {})
-    
-    # Look for existing photo entry by filename
-    photo_id = str(filepath.name)
-    if photo_id not in photos:
-        # Try to find by any existing key (sometimes ON1 uses different naming)
-        if photos:
-            photo_id = list(photos.keys())[0]
-        else:
-            # Create new photo entry
-            photos[photo_id] = {"metadata": {}}
-    
+
+    # Look for existing photo entry by checking the "name" field in each photo entry
+    photo_id = None
+    filename = str(filepath.name)
+
+    # First try to find by filename as key
+    if filename in photos:
+        photo_id = filename
+    else:
+        # Look through all photo entries to find one with matching name
+        for key, photo_data in photos.items():
+            if photo_data.get('name') == filename:
+                photo_id = key
+                break
+
+    # If not found, create new entry
+    if photo_id is None:
+        photo_id = filename
+        photos[photo_id] = {"metadata": {}, "name": filename}
+
     photo_data = photos[photo_id]
+    
+    # Preserve all existing photo-level data (blurhash, face_scan_timestamp, etc.)
+    # Only modify the metadata section
     
     # Get or create metadata section
     metadata = photo_data.setdefault('metadata', {})
@@ -73,25 +103,23 @@ def write_on1_metadata(filepath, decision, metrics, confidence, issues, override
     existing_keywords = metadata.get('Keywords', [])
     
     if override:
-        # Override mode: only keep non-culler keywords, but replace everything
-        existing_keywords = [kw for kw in existing_keywords 
-                            if not kw.startswith('PhotoCuller:') 
-                            and not kw.startswith('CullerConfidence:')
-                            and not kw.startswith('CullerIssues:')
-                            and not kw.startswith('CullerAnalysis:')
-                            and not kw.startswith('CullerSuggestedRating:')
-                            and not kw.startswith('AI:')]
-        # In override mode, clear existing keywords and start fresh
+        # Override mode: clear ALL existing keywords in metadata, start fresh
+        # Force clear the Keywords array in the metadata
+        metadata['Keywords'] = []
+        # Also clear hierarchical keywords if they exist
+        if 'HierarchicalKeywords' in metadata:
+            metadata['HierarchicalKeywords'] = []
+        # Start with empty keywords list
         existing_keywords = []
+
+        # Clear ON1's AI classifications that might appear as keywords
+        # ml_classes is at the photo level, not metadata level
+        if 'ml_classes' in photo_data:
+            photo_data['ml_classes'] = {"classifications": []}
     else:
-        # Preserve mode: only remove old culler data, keep user keywords
-        existing_keywords = [kw for kw in existing_keywords 
-                            if not kw.startswith('PhotoCuller:') 
-                            and not kw.startswith('CullerConfidence:')
-                            and not kw.startswith('CullerIssues:')
-                            and not kw.startswith('CullerAnalysis:')
-                            and not kw.startswith('CullerSuggestedRating:')
-                            and not kw.startswith('AI:')]
+        # Preserve mode: clear existing keywords and replace with our AI-generated ones
+        # This ensures we don't duplicate keywords from previous runs
+        existing_keywords = []
     
     # Add new culler keywords
     issues_str = ', '.join(issues) if issues else 'none'
@@ -103,14 +131,18 @@ def write_on1_metadata(filepath, decision, metrics, confidence, issues, override
     
     # Add clean AI-generated keywords (no prefix, they're already good)
     if hasattr(metrics, 'keywords') and metrics.keywords:
-        existing_keywords.extend(metrics.keywords[:8])  # Add directly to keywords
+        # Ensure keywords is a list and not None
+        ai_keywords = metrics.keywords if isinstance(metrics.keywords, list) else []
+        existing_keywords.extend(ai_keywords[:8])  # Add directly to keywords
     
     # Handle description based on override mode
     if hasattr(metrics, 'description') and metrics.description:
-        if override or 'Description' not in metadata:
-            # Override existing description or add if none exists
+        if override:
+            # Override mode: always overwrite description
             metadata['Description'] = metrics.description
-        # In preserve mode, don't overwrite existing descriptions
+        elif 'Description' not in metadata:
+            # Preserve mode: only add if no description exists
+            metadata['Description'] = metrics.description
     
     # Only suggest rating if none exists (rating 0 means no rating in ON1)
     existing_rating = metadata.get('Rating', 0)
@@ -139,6 +171,19 @@ def write_on1_metadata(filepath, decision, metrics, confidence, issues, override
         'composition_score': f'{metrics.composition_score:.2f}',
         'overall_quality': f'{metrics.overall_quality:.2f}'
     }
+
+    # Add enhanced focus information if available
+    if hasattr(metrics, 'enhanced_focus') and metrics.enhanced_focus:
+        ef = metrics.enhanced_focus
+        analysis['enhanced_focus'] = {
+            'subject_type': ef.get('subject_type', 'unknown'),
+            'subject_sharpness': f"{ef.get('subject_sharpness', 0):.2f}",
+            'background_blur': f"{ef.get('background_blur', 0):.2f}",
+            'is_shallow_dof': ef.get('is_shallow_dof', False),
+            'focus_regions': len(ef.get('focus_regions', [])),
+            'recommendations': ef.get('recommendations', [])
+        }
+
     metadata['PhotoCullerAnalysis'] = analysis
     
     # Only add the basic culler tags to keywords (clean and searchable)
@@ -230,8 +275,9 @@ def print_result(filepath, decision, confidence, issues, metrics):
 @click.option('--ollama-model', default='llava:13b', help='Ollama model to use')
 @click.option('--verbose', is_flag=True, help='Show processing details')
 @click.option('--extensions', default='nef,cr2,arw,jpg,jpeg', help='File extensions to process')
-@click.option('--override', is_flag=True, help='Override existing keywords and descriptions (preserves ratings and edits)')
-def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama_model, verbose, extensions, override):
+@click.option('--override', is_flag=True, help='Override ALL existing keywords and descriptions (preserves ratings only)')
+@click.option('--learning', is_flag=True, help='Enable adaptive learning mode')
+def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama_model, verbose, extensions, override, learning):
     """
     All-in-one photo culler for ON1 Photo RAW:
     
@@ -275,12 +321,13 @@ def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama
     # Initialize culler
     try:
         culler = BatchCuller(
-            cache_dir=cache, 
+            cache_dir=cache,
             mode=mode,
             max_workers=4,
             batch_size=8,
             use_ollama=use_ollama,
-            ollama_model=ollama_model
+            ollama_model=ollama_model,
+            learning_enabled=learning
         )
         
     except Exception as e:
@@ -349,6 +396,38 @@ def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama
         except Exception as e:
             print(f"❌ Error processing {filepath.name}: {e}")
             results['Failed'].append(filepath)
+    
+    # Save session data (adaptive learning, caches, etc.)
+    try:
+        culler.save_session()
+        
+        # Show adaptive learning insights if available
+        session_summary = culler.get_session_summary()
+        if session_summary and session_summary.get('total_processed', 0) > 0:
+            print("\n📚 ADAPTIVE LEARNING SUMMARY")
+            print("=" * 60)
+            
+            # Show detected style preferences
+            detected_style = session_summary.get('detected_style', {})
+            if detected_style.get('uses_shallow_dof'):
+                print("📸 Detected: Preference for shallow depth of field photography")
+            if detected_style.get('prefers_dark_mood'):
+                print("🌙 Detected: Preference for dark/moody exposure style")
+            if detected_style.get('common_subjects'):
+                subjects = ', '.join(detected_style['common_subjects'])
+                print(f"🎯 Common subjects: {subjects}")
+            
+            # Show average quality scores
+            for metric in ['blur', 'exposure', 'composition']:
+                avg_key = f'avg_{metric}'
+                if avg_key in session_summary:
+                    score = session_summary[avg_key]
+                    print(f"📈 Average {metric} score: {score:.2f}")
+            
+            print("📊 Learning data saved - future sessions will be more accurate")
+            
+    except Exception as e:
+        print(f"⚠️  Warning: Failed to save session data: {e}")
     
     # Summary
     print("=" * 60)

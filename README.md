@@ -4,22 +4,36 @@ A smart photo culling system that combines traditional computer vision with mode
 
 ## Features ✨
 
+- **Adaptive AI-Powered Analysis**:
+  - **Subject-Aware Focus Detection**: Evaluates main subject sharpness instead of entire image
+  - **Enhanced Focus Analysis**: Advanced CV-based subject detection and depth-of-field analysis  
+  - **Improved Ollama Integration**: Structured JSON output for reliable parsing
+  - **Photography Style Learning**: Automatically adapts to your shooting preferences
+  
 - **Dual Processing Modes**:
-  - **Accurate Mode** (default): Uses CLIP or Ollama vision model for 85-90% accuracy on focus detection
-  - **Fast Mode**: Traditional CV for quick triage (200ms/image vs 1s/image)
+  - **Accurate Mode** (default): Uses enhanced Ollama vision model for 90-95% accuracy on focus detection
+  - **Fast Mode**: Enhanced CV with subject detection for quick triage (200ms/image vs 1s/image)
+
+- **Adaptive Learning System**:
+  - **Style Detection**: Learns your preferences for shallow DOF, exposure styles, common subjects
+  - **Threshold Adjustment**: Automatically adjusts decision thresholds based on your feedback
+  - **Session Insights**: Shows detected photography style and learning progress
+  - **Persistent Learning**: Saves preferences between sessions for improved accuracy
 
 - **Smart Caching**: Never reprocess the same file/mode combination
-- **Batch Processing**: Vision model processes 8 images at once for efficiency  
-- **Graceful Fallback**: Auto-falls back to fast mode if GPU/CLIP unavailable
-- **RAW Support**: Handles NEF, CR2, ARW, and other RAW formats
-- **Intelligent Decisions**: Categorizes photos as Keep, Delete, or Review
-- **Metadata Integration**:
-  - ON1 Photo RAW support with .on1 sidecar files (Main workflow)
+- **Batch Processing**: Vision model processes images efficiently with intelligent batching
+- **Graceful Fallback**: Auto-falls back through multiple analysis methods if components unavailable
+- **Enhanced RAW Support**: Proper thumbnail extraction for NEF, CR2, ARW, and other RAW formats
+- **Intelligent Decisions**: Categorizes photos as Keep, Delete, or Review with confidence scoring
+- **Advanced Metadata Integration**:
+  - ON1 Photo RAW support with .on1 sidecar files (Primary workflow)
   - Universal XMP metadata for Lightroom, Capture One, Bridge and more
+  - AI-generated keywords and descriptions
+  - Technical analysis data storage
 - **Multiple Culling Tools**:
-  - ON1-specific metadata integration (Primary method)
+  - ON1-specific metadata integration with override options (Primary method)
   - Universal metadata support for all photo apps  
-  - Standard culling with CSV output
+  - Standard culling with CSV output and analytics
 
 
 ## Quick Start 🚀

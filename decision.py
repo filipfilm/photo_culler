@@ -8,9 +8,9 @@ class CullingDecisionEngine:
     """Make culling decisions based on image metrics"""
     
     def __init__(self, 
-                 blur_threshold: float = 0.3,
-                 exposure_threshold: float = 0.4, 
-                 overall_threshold: float = 0.5,
+                 blur_threshold: float = 0.15,  # Much more realistic - was way too high
+                 exposure_threshold: float = 0.25, # More realistic
+                 overall_threshold: float = 0.35,  # More realistic  
                  delete_confidence_threshold: float = 0.7):
         
         self.blur_threshold = blur_threshold

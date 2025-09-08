@@ -58,51 +58,97 @@ class TechnicalAnalyzer:
             except Exception as e:
                 logging.getLogger(__name__).warning(f"Failed to initialize enhanced focus analyzer: {e}")
 
-        # Initialize technical QC analyzer
-        try:
-            from technical_qc import TechnicalQC
-            self.technical_qc = TechnicalQC()
-        except ImportError:
-            logging.getLogger(__name__).warning("Technical QC module not available")
-            self.technical_qc = None
+        # Disable modern analyzers temporarily due to array dimension issues
+        # TODO: Re-enable after fixing array handling
+        self.advanced_focus = None
+        self.smart_exposure = None  
+        self.smart_composition = None
+        
+        logging.getLogger(__name__).info("Using traditional CV analysis (modern analyzers disabled)")
+        
+        # Keep this code for future re-enabling:
+        # try:
+        #     from advanced_focus_detector import AdvancedFocusDetector
+        #     self.advanced_focus = AdvancedFocusDetector()
+        # except ImportError:
+        #     self.advanced_focus = None
 
     def analyze(self, image: Image.Image) -> ImageMetrics:
-        """Return metrics using traditional CV with enhanced technical analysis"""
+        """Return metrics using modern advanced analysis"""
         # Resize for consistent processing
-        image.thumbnail((800, 800), Image.Resampling.LANCZOS)
+        analysis_image = image.copy()
+        analysis_image.thumbnail((800, 800), Image.Resampling.LANCZOS)
 
-        rgb = np.array(image.convert('RGB'))
-        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-
-        blur, enhanced_focus_data = self._blur_score(image, gray)
-        exposure = self._exposure_score(rgb)
-        composition = self._composition_score(gray)
-
-        # Enhanced technical analysis
-        technical_issues = None
-        if self.technical_qc:
+        # Use modern analyzers if available
+        focus_score = 0.5
+        exposure_score = 0.5
+        composition_score = 0.5
+        
+        advanced_analysis = {}
+        
+        # Advanced focus detection
+        if self.advanced_focus:
             try:
-                technical_issues = self.technical_qc.analyze(image)
-                # Adjust scores based on technical issues
-                technical_adjustment = technical_issues.overall_technical_score
-                blur *= (0.7 + 0.3 * technical_adjustment)  # Blend with technical score
-                exposure *= (0.8 + 0.2 * technical_adjustment)
+                focus_analysis = self.advanced_focus.analyze_focus(analysis_image)
+                focus_score = focus_analysis['focus_score']
+                advanced_analysis['focus'] = focus_analysis
             except Exception as e:
-                logging.getLogger(__name__).warning(f"Technical QC analysis failed: {e}")
+                logging.getLogger(__name__).warning(f"Advanced focus analysis failed: {e}")
+                # Fallback to traditional
+                rgb = np.array(analysis_image.convert('RGB'))
+                gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+                focus_score, _ = self._blur_score(analysis_image, gray)
+        
+        # Smart exposure analysis
+        if self.smart_exposure:
+            try:
+                exposure_analysis = self.smart_exposure.analyze_exposure(analysis_image)
+                exposure_score = exposure_analysis['exposure_score']
+                advanced_analysis['exposure'] = exposure_analysis
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Smart exposure analysis failed: {e}")
+                # Fallback to traditional
+                rgb = np.array(analysis_image.convert('RGB'))
+                exposure_score = self._exposure_score(rgb)
+        
+        # Intelligent composition analysis
+        if self.smart_composition:
+            try:
+                composition_analysis = self.smart_composition.analyze_composition(analysis_image)
+                composition_score = composition_analysis['composition_score']
+                advanced_analysis['composition'] = composition_analysis
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Intelligent composition analysis failed: {e}")
+                # Fallback to traditional
+                rgb = np.array(analysis_image.convert('RGB'))
+                gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+                composition_score = self._composition_score(gray)
 
-        # Weighted overall
-        overall = blur * 0.5 + exposure * 0.3 + composition * 0.2
+        # If no modern analyzers available, fall back to traditional methods
+        if not any([self.advanced_focus, self.smart_exposure, self.smart_composition]):
+            rgb = np.array(analysis_image.convert('RGB'))
+            gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+            
+            focus_score, enhanced_focus_data = self._blur_score(analysis_image, gray)
+            exposure_score = self._exposure_score(rgb)
+            composition_score = self._composition_score(gray)
+            
+            if enhanced_focus_data:
+                advanced_analysis['enhanced_focus'] = enhanced_focus_data
+
+        # Weighted overall with emphasis on focus (most important)
+        overall = focus_score * 0.5 + exposure_score * 0.3 + composition_score * 0.2
 
         return ImageMetrics(
-            blur_score=blur,
-            exposure_score=exposure,
-            composition_score=composition,
+            blur_score=focus_score,
+            exposure_score=exposure_score,
+            composition_score=composition_score,
             overall_quality=overall,
             processing_mode=ProcessingMode.FAST,
             keywords=None,  # Traditional CV doesn't generate keywords
             description=None,  # Traditional CV doesn't generate descriptions
-            enhanced_focus=enhanced_focus_data,
-            technical_issues=technical_issues  # Add technical issues to metrics
+            enhanced_focus=advanced_analysis.get('enhanced_focus'),
+            technical_issues=advanced_analysis  # Store all advanced analysis
         )
     
     def _blur_score(self, image: Image.Image, gray: np.ndarray) -> Tuple[float, Optional[Dict]]:

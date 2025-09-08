@@ -30,9 +30,9 @@ class Config:
                 "batch_size": 4
             },
             "thresholds": {
-                "blur": {"delete": 0.3, "review": 0.5},
-                "exposure": {"delete": 0.3, "review": 0.5},
-                "composition": {"delete": 0.2, "review": 0.4}
+                "blur": {"delete": 0.15, "review": 0.30},  # Much more realistic - Ollama gives lower scores
+                "exposure": {"delete": 0.25, "review": 0.45},  # More realistic
+                "composition": {"delete": 0.15, "review": 0.35}  # More realistic
             },
             "subject_detection": {
                 "enabled": True,

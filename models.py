@@ -17,6 +17,7 @@ class ImageMetrics:
     keywords: Optional[List[str]] = None  # AI-generated keywords
     description: Optional[str] = None  # Natural language description
     enhanced_focus: Optional[Dict] = None  # Enhanced focus analysis results
+    technical_issues: Optional[Dict] = None  # Technical QC analysis results
     
 @dataclass
 class CullResult:

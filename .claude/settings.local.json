@@ -10,7 +10,8 @@
       "Bash(curl:*)",
       "Bash(ollama serve:*)",
       "Bash(OLLAMA_HOST=127.0.0.1:11435 ollama serve)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(chmod:*)"
     ],
     "deny": [],
     "ask": []

@@ -44,7 +44,7 @@ VISION_AVAILABLE = CLIP_AVAILABLE or OLLAMA_AVAILABLE
 
 
 class TechnicalAnalyzer:
-    """Fast traditional CV analyzer"""
+    """Fast traditional CV analyzer with enhanced technical QC"""
     def __init__(self):
         self.blur_threshold = 100
         self.highlight_clip_percent = 0.01
@@ -58,8 +58,16 @@ class TechnicalAnalyzer:
             except Exception as e:
                 logging.getLogger(__name__).warning(f"Failed to initialize enhanced focus analyzer: {e}")
 
+        # Initialize technical QC analyzer
+        try:
+            from technical_qc import TechnicalQC
+            self.technical_qc = TechnicalQC()
+        except ImportError:
+            logging.getLogger(__name__).warning("Technical QC module not available")
+            self.technical_qc = None
+
     def analyze(self, image: Image.Image) -> ImageMetrics:
-        """Return metrics using traditional CV"""
+        """Return metrics using traditional CV with enhanced technical analysis"""
         # Resize for consistent processing
         image.thumbnail((800, 800), Image.Resampling.LANCZOS)
 
@@ -69,6 +77,18 @@ class TechnicalAnalyzer:
         blur, enhanced_focus_data = self._blur_score(image, gray)
         exposure = self._exposure_score(rgb)
         composition = self._composition_score(gray)
+
+        # Enhanced technical analysis
+        technical_issues = None
+        if self.technical_qc:
+            try:
+                technical_issues = self.technical_qc.analyze(image)
+                # Adjust scores based on technical issues
+                technical_adjustment = technical_issues.overall_technical_score
+                blur *= (0.7 + 0.3 * technical_adjustment)  # Blend with technical score
+                exposure *= (0.8 + 0.2 * technical_adjustment)
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Technical QC analysis failed: {e}")
 
         # Weighted overall
         overall = blur * 0.5 + exposure * 0.3 + composition * 0.2
@@ -81,7 +101,8 @@ class TechnicalAnalyzer:
             processing_mode=ProcessingMode.FAST,
             keywords=None,  # Traditional CV doesn't generate keywords
             description=None,  # Traditional CV doesn't generate descriptions
-            enhanced_focus=enhanced_focus_data
+            enhanced_focus=enhanced_focus_data,
+            technical_issues=technical_issues  # Add technical issues to metrics
         )
     
     def _blur_score(self, image: Image.Image, gray: np.ndarray) -> Tuple[float, Optional[Dict]]:

@@ -224,6 +224,254 @@ def append_to_csv(csv_file, filepath, decision, confidence, issues, metrics, pro
         })
 
 
+def process_sequential(files, culler, detail, fast, override, csv_path):
+    """Original single-threaded processing"""
+    from tqdm import tqdm
+    
+    results = {'Keep': [], 'Delete': [], 'Review': [], 'Failed': []}
+    on1_updated = 0
+    
+    print("🚀 Starting sequential processing with progress tracking...")
+    
+    with tqdm(total=len(files), desc="Processing images", unit="img") as pbar:
+        for filepath in files:
+            pbar.set_description(f"Processing {filepath.name}")
+            
+            try:
+                result = culler.process_image(filepath)
+                
+                if result:
+                    decision = result.decision
+                    confidence = result.confidence
+                    issues = result.issues
+                    metrics = result.metrics
+                    processing_ms = result.processing_ms
+                    
+                    # Add to results
+                    results[decision].append(result)
+                    
+                    # Print result only if detail flag is enabled
+                    if detail:
+                        print_result(filepath, decision, confidence, issues, metrics)
+                    
+                    # Write ON1 metadata (unless fast mode)
+                    if not fast:
+                        on1_file = filepath.with_suffix('.on1')
+                        file_existed = on1_file.exists()
+                        
+                        if write_on1_metadata(filepath, decision, metrics, confidence, issues, override):
+                            on1_updated += 1
+                            if detail:
+                                if file_existed:
+                                    action = "Overrode" if override else "Updated"
+                                    print(f"   ✅ {action} ON1 metadata")
+                                else:
+                                    print(f"   ✅ Created ON1 metadata file")
+                        else:
+                            if detail:
+                                print(f"   ❌ Failed to write ON1 metadata")
+                    
+                    # Append to CSV
+                    append_to_csv(csv_path, filepath, decision, confidence, issues, metrics, processing_ms)
+                    
+                else:
+                    if detail:
+                        print(f"❌ Failed to process {filepath.name}")
+                    results['Failed'].append(filepath)
+                    
+            except Exception as e:
+                if detail:
+                    print(f"❌ Error processing {filepath.name}: {e}")
+                results['Failed'].append(filepath)
+            
+            pbar.update(1)
+    
+    return results, on1_updated
+
+
+def process_concurrent(files, culler, concurrent, chunk_size, detail, fast, override, csv_path):
+    """Concurrent processing with multiple Ollama instances"""
+    from tqdm import tqdm
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+    
+    results = {'Keep': [], 'Delete': [], 'Review': [], 'Failed': []}
+    on1_updated = 0
+    results_lock = threading.Lock()
+    on1_lock = threading.Lock()
+    
+    print(f"🚀 Starting concurrent processing: {concurrent} Ollama instances, chunk size {chunk_size}")
+    
+    # Auto-start additional Ollama servers if needed
+    if concurrent > 1:
+        import subprocess
+        import time
+        import requests
+        import os
+        
+        print(f"   🔧 Setting up {concurrent} Ollama servers...")
+        
+        # Check which Ollama servers are already running
+        running_ports = []
+        for i in range(concurrent):
+            port = 11434 + i
+            try:
+                response = requests.get(f"http://localhost:{port}/api/tags", timeout=1)
+                if response.status_code == 200:
+                    running_ports.append(port)
+                    print(f"   ✅ Ollama server already running on port {port}")
+            except:
+                pass
+        
+        # Start missing Ollama servers
+        started_processes = []
+        for i in range(concurrent):
+            port = 11434 + i
+            if port not in running_ports:
+                try:
+                    print(f"   🚀 Starting Ollama server on port {port}...")
+                    # Create full environment with OLLAMA_HOST
+                    env = os.environ.copy()
+                    env["OLLAMA_HOST"] = f"127.0.0.1:{port}"
+                    
+                    process = subprocess.Popen(
+                        ["ollama", "serve"],
+                        env=env,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                    started_processes.append((port, process))
+                    time.sleep(3)  # Give server more time to start
+                    
+                    # Verify server started
+                    try:
+                        response = requests.get(f"http://localhost:{port}/api/tags", timeout=3)
+                        if response.status_code == 200:
+                            print(f"   ✅ Ollama server started successfully on port {port}")
+                        else:
+                            print(f"   ⚠️  Ollama server on port {port} may not be ready yet")
+                    except:
+                        print(f"   ⚠️  Ollama server on port {port} starting (may take a moment)")
+                        
+                except Exception as e:
+                    print(f"   ❌ Failed to start Ollama server on port {port}: {e}")
+    
+    # Create multiple culler instances with different Ollama ports
+    cullers = []
+    if concurrent > 1:
+        for i in range(concurrent):
+            ollama_port = 11434 + i  # Use ports 11434, 11435, 11436, etc.
+            ollama_host = f"http://localhost:{ollama_port}"
+            
+            # Create new BatchCuller instance with different port
+            concurrent_culler = BatchCuller(
+                cache_dir=culler.cache_dir,
+                mode=culler.mode,
+                max_workers=culler.max_workers,
+                batch_size=culler.batch_size,
+                force_cpu=False,  # Use original force_cpu setting if available
+                use_ollama=culler.use_ollama,
+                ollama_model=culler.ollama_model,
+                ollama_host=ollama_host,
+                learning_enabled=culler.learning_enabled
+            )
+            cullers.append(concurrent_culler)
+            print(f"   🔗 Created Ollama client {i+1} for port {ollama_port}")
+    else:
+        cullers.append(culler)
+    
+    def process_chunk(file_chunk, culler_index=0):
+        """Process a chunk of files with assigned culler"""
+        batch_culler = cullers[culler_index % len(cullers)]
+        batch_results = []
+        batch_on1_updated = 0
+        
+        for filepath in file_chunk:
+            try:
+                result = batch_culler.process_image(filepath)
+                
+                if result:
+                    decision = result.decision
+                    confidence = result.confidence
+                    issues = result.issues
+                    metrics = result.metrics
+                    processing_ms = result.processing_ms
+                    
+                    batch_results.append((decision, result))
+                    
+                    # Print result only if detail flag is enabled
+                    if detail:
+                        print_result(filepath, decision, confidence, issues, metrics)
+                    
+                    # Write ON1 metadata (unless fast mode)
+                    if not fast:
+                        on1_file = filepath.with_suffix('.on1')
+                        file_existed = on1_file.exists()
+                        
+                        if write_on1_metadata(filepath, decision, metrics, confidence, issues, override):
+                            batch_on1_updated += 1
+                            if detail:
+                                if file_existed:
+                                    action = "Overrode" if override else "Updated"
+                                    print(f"   ✅ {action} ON1 metadata")
+                                else:
+                                    print(f"   ✅ Created ON1 metadata file")
+                        else:
+                            if detail:
+                                print(f"   ❌ Failed to write ON1 metadata")
+                    
+                    # Append to CSV
+                    append_to_csv(csv_path, filepath, decision, confidence, issues, metrics, processing_ms)
+                    
+                else:
+                    if detail:
+                        print(f"❌ Failed to process {filepath.name}")
+                    batch_results.append(('Failed', filepath))
+                    
+            except Exception as e:
+                if detail:
+                    print(f"❌ Error processing {filepath.name}: {e}")
+                batch_results.append(('Failed', filepath))
+        
+        return batch_results, batch_on1_updated
+    
+    # Split files into chunks
+    chunks = []
+    for i in range(0, len(files), chunk_size):
+        chunks.append(files[i:i + chunk_size])
+    
+    # Process chunks concurrently
+    with tqdm(total=len(files), desc="Processing images", unit="img") as pbar:
+        with ThreadPoolExecutor(max_workers=concurrent) as executor:
+            # Submit all chunks with culler assignment
+            future_to_chunk = {
+                executor.submit(process_chunk, chunk, chunk_idx): chunk 
+                for chunk_idx, chunk in enumerate(chunks)
+            }
+            
+            # Collect results
+            for future in as_completed(future_to_chunk):
+                chunk = future_to_chunk[future]
+                try:
+                    batch_results, batch_on1_updated = future.result()
+                    
+                    # Thread-safe result aggregation
+                    with results_lock:
+                        for decision, item in batch_results:
+                            results[decision].append(item)
+                    
+                    with on1_lock:
+                        on1_updated += batch_on1_updated
+                    
+                    pbar.update(len(chunk))
+                    
+                except Exception as e:
+                    print(f"❌ Chunk processing failed: {e}")
+                    pbar.update(len(chunk))
+    
+    return results, on1_updated
+
+
 def print_result(filepath, decision, confidence, issues, metrics):
     """Print result for this photo"""
     issues_str = ', '.join(issues) if issues else 'none'
@@ -271,7 +519,9 @@ def print_result(filepath, decision, confidence, issues, metrics):
 @click.option('--extensions', default='nef,cr2,arw,jpg,jpeg', help='File extensions to process')
 @click.option('--override', is_flag=True, help='Override ALL existing keywords and descriptions (preserves ratings only)')
 @click.option('--learning', is_flag=True, help='Enable adaptive learning mode')
-def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama_model, verbose, detail, extensions, override, learning):
+@click.option('--chunk-size', default=1, help='Number of images per worker chunk (for load balancing)')
+@click.option('--concurrent', default=1, help='Number of concurrent Ollama instances (requires multiple Ollama servers on different ports)')
+def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama_model, verbose, detail, extensions, override, learning, chunk_size, concurrent):
     """
     All-in-one photo culler for ON1 Photo RAW:
     
@@ -342,48 +592,12 @@ def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama
     
     print(f"🔍 Found {len(files)} files to process\n")
     
-    # Process files with progress bar (handled in BatchCuller)
-    print("🚀 Starting batch processing with progress tracking...")
-    results = culler.process_folder_batch(folder, ext_list)
-    
-    # Post-process results for ON1 metadata and CSV
-    on1_updated = 0
-    
-    print("\n📝 Writing metadata and CSV results...")
-    for decision, items in results.items():
-        if decision == 'Failed':
-            continue
-            
-        for result in items:
-            filepath = result.filepath
-            confidence = result.confidence
-            issues = result.issues
-            metrics = result.metrics
-            processing_ms = result.processing_ms
-            
-            # Print result only if detail flag is enabled
-            if detail:
-                print_result(filepath, decision, confidence, issues, metrics)
-            
-            # Write ON1 metadata (unless fast mode)
-            if not fast:
-                on1_file = filepath.with_suffix('.on1')
-                file_existed = on1_file.exists()
-                
-                if write_on1_metadata(filepath, decision, metrics, confidence, issues, override):
-                    on1_updated += 1
-                    if detail:
-                        if file_existed:
-                            action = "Overrode" if override else "Updated"
-                            print(f"   ✅ {action} ON1 metadata")
-                        else:
-                            print(f"   ✅ Created ON1 metadata file")
-                else:
-                    if detail:
-                        print(f"   ❌ Failed to write ON1 metadata")
-            
-            # Append to CSV
-            append_to_csv(csv_path, filepath, decision, confidence, issues, metrics, processing_ms)
+    # Process with concurrent Ollama instances
+    if concurrent > 1 or chunk_size > 1:
+        results, on1_updated = process_concurrent(files, culler, concurrent, chunk_size, detail, fast, override, csv_path)
+    else:
+        # Single threaded processing (original)
+        results, on1_updated = process_sequential(files, culler, detail, fast, override, csv_path)
     
     # Save session data (adaptive learning, caches, etc.)
     try:

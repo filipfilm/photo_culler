@@ -21,14 +21,22 @@ class SubjectDetector:
     def detect_portrait_subject(self, image: Image.Image) -> Dict:
         """Detect if image is portrait and find eye regions"""
         
-        # Convert to OpenCV format
-        cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-        gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
-        
-        # Detect faces
-        faces = self.face_cascade.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(100, 100)
-        )
+        try:
+            # Convert to OpenCV format
+            cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+            gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
+            
+            # Detect faces with more robust parameters
+            faces = self.face_cascade.detectMultiScale(
+                gray, 
+                scaleFactor=1.2,  # Increased for better stability
+                minNeighbors=3,   # Reduced for more sensitivity
+                minSize=(50, 50), # Smaller minimum for distant faces
+                flags=cv2.CASCADE_SCALE_IMAGE
+            )
+        except Exception as e:
+            self.logger.warning(f"Face detection failed: {e}")
+            return {"is_portrait": False, "requires_eye_focus": False}
         
         if len(faces) == 0:
             return {"is_portrait": False, "requires_eye_focus": False}
@@ -41,10 +49,18 @@ class SubjectDetector:
         # Extract face region
         face_roi = gray[y:y+h, x:x+w]
         
-        # Detect eyes
-        eyes = self.eye_cascade.detectMultiScale(
-            face_roi, scaleFactor=1.05, minNeighbors=3
-        )
+        # Detect eyes with error handling
+        try:
+            eyes = self.eye_cascade.detectMultiScale(
+                face_roi, 
+                scaleFactor=1.1,  # More stable scale factor
+                minNeighbors=2,
+                minSize=(10, 10),
+                flags=cv2.CASCADE_SCALE_IMAGE
+            )
+        except Exception as e:
+            self.logger.warning(f"Eye detection failed: {e}")
+            eyes = []
         
         result = {
             "is_portrait": True,

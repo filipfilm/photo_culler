@@ -14,7 +14,7 @@ class OllamaVisionAnalyzer:
     def __init__(self, 
                  model: str = "llava:7b",
                  host: str = "http://localhost:11434",
-                 timeout: int = 60):
+                 timeout: int = 180):
         
         self.model = model
         self.host = host.rstrip('/')
@@ -31,7 +31,7 @@ class OllamaVisionAnalyzer:
             response = requests.get(f"{self.host}/api/tags", timeout=5)
             if response.status_code != 200:
                 raise ConnectionError(f"Ollama returned status {response.status_code}")
-            self.logger.info("Connected to Ollama successfully")
+            self.logger.info(f"Connected to Ollama successfully at {self.host}")
         except Exception as e:
             self.logger.error(f"Failed to connect to Ollama at {self.host}: {e}")
             raise ConnectionError(f"Cannot connect to Ollama. Make sure it's running at {self.host}")
@@ -392,12 +392,13 @@ class ImprovedOllamaVisionAnalyzer:
     def __init__(self, 
                  model: str = "llava:13b",
                  host: str = "http://localhost:11434",
-                 timeout: int = 90):
+                 timeout: int = 180):
         
         self.model = model
         self.host = host.rstrip('/')
         self.timeout = timeout
         self.logger = logging.getLogger(__name__)
+        self.logger.info(f"🐛 ImprovedOllamaVisionAnalyzer.__init__ received host={host}, using self.host={self.host}")
         
         # Test connection and model availability
         self._check_ollama_connection()
@@ -418,7 +419,7 @@ class ImprovedOllamaVisionAnalyzer:
             response = requests.get(f"{self.host}/api/tags", timeout=5)
             if response.status_code != 200:
                 raise ConnectionError(f"Ollama returned status {response.status_code}")
-            self.logger.info("Connected to Ollama successfully")
+            self.logger.info(f"Connected to Ollama successfully at {self.host}")
         except Exception as e:
             self.logger.error(f"Failed to connect to Ollama at {self.host}: {e}")
             raise ConnectionError(f"Cannot connect to Ollama. Make sure it's running at {self.host}")

@@ -183,7 +183,8 @@ class VisionAnalyzer:
                  device: Optional[str] = None, 
                  model_size: str = "ViT-B/32",
                  use_ollama: bool = False,
-                 ollama_model: str = "llava:13b"):  # Changed default
+                 ollama_model: str = "llava:13b",  # Changed default
+                 ollama_host: str = "http://localhost:11434"):
         
         self.logger = logging.getLogger(__name__)
         self.use_ollama = use_ollama
@@ -203,11 +204,11 @@ class VisionAnalyzer:
                 try:
                     # Use improved analyzer if available, fall back to basic one
                     if IMPROVED_OLLAMA_AVAILABLE:
-                        self.analyzer = ImprovedOllamaVisionAnalyzer(model=ollama_model)
-                        self.logger.info(f"Using Improved Ollama vision model: {ollama_model}")
+                        self.analyzer = ImprovedOllamaVisionAnalyzer(model=ollama_model, host=ollama_host)
+                        self.logger.info(f"Using Improved Ollama vision model: {ollama_model} at {ollama_host}")
                     else:
-                        self.analyzer = OllamaVisionAnalyzer(model=ollama_model)
-                        self.logger.info(f"Using Ollama vision model: {ollama_model}")
+                        self.analyzer = OllamaVisionAnalyzer(model=ollama_model, host=ollama_host)
+                        self.logger.info(f"Using Ollama vision model: {ollama_model} at {ollama_host}")
                     self.use_ollama = True
                     return
                 except Exception as e:
@@ -358,7 +359,8 @@ class HybridAnalyzer:
     def __init__(self, mode: ProcessingMode = ProcessingMode.ACCURATE, 
                  force_cpu: bool = False,
                  use_ollama: bool = False,
-                 ollama_model: str = "llava:13b"):
+                 ollama_model: str = "llava:13b",
+                 ollama_host: str = "http://localhost:11434"):
         self.mode = mode
         self.logger = logging.getLogger(__name__)
         
@@ -375,7 +377,8 @@ class HybridAnalyzer:
                     self.vision_analyzer = VisionAnalyzer(
                         device=device, 
                         use_ollama=True, 
-                        ollama_model=ollama_model
+                        ollama_model=ollama_model,
+                        ollama_host=ollama_host
                     )
                     self.logger.info(f"Vision model loaded successfully (Ollama: {ollama_model})")
                 else:

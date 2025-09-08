@@ -31,6 +31,7 @@ class BatchCuller:
                  force_cpu: bool = False,
                  use_ollama: bool = False,
                  ollama_model: str = "llava:13b",
+                 ollama_host: str = "http://localhost:11434",
                  learning_enabled: bool = False):
         
         self.cache_dir = cache_dir
@@ -39,6 +40,7 @@ class BatchCuller:
         self.batch_size = batch_size
         self.use_ollama = use_ollama
         self.ollama_model = ollama_model
+        self.ollama_host = ollama_host
         self.learning_enabled = learning_enabled
         self.logger = logging.getLogger(__name__)
         
@@ -48,7 +50,8 @@ class BatchCuller:
             mode=mode, 
             force_cpu=force_cpu,
             use_ollama=use_ollama,
-            ollama_model=ollama_model
+            ollama_model=ollama_model,
+            ollama_host=ollama_host
         )
         # Use adaptive decision engine if available and learning is enabled
         if ADAPTIVE_ENGINE_AVAILABLE and learning_enabled:

@@ -419,8 +419,7 @@ class OllamaVisionAnalyzer:
             self.logger.warning(f"Tagging pass failed: {e}")
             return "", []
 
-        keywords = [str(k).strip().lower() for k in data.get("keywords", []) if str(k).strip()]
-        return str(data.get("description", "")).strip(), keywords[:10]
+        return str(data.get("description", "")).strip(), _clean_keywords(data.get("keywords", []))
 
     def analyze(self, image: Image.Image, with_tags: bool = True) -> ImageMetrics:
         """Full analysis: triage, then tagging unless the frame is being rejected."""
@@ -432,6 +431,27 @@ class OllamaVisionAnalyzer:
             metrics.keywords = keywords
 
         return metrics
+
+
+def _clean_keywords(raw: List, limit: int = 10) -> List[str]:
+    """Normalise model keywords into something a photo app can search.
+
+    Models mix conventions within a single shoot -- the same subject came back as
+    "ice cream" for one frame and "ice_cream" for the next, which a catalogue treats as
+    two unrelated tags. Underscores and hyphens become spaces, and duplicates that
+    collapse to the same text are dropped.
+    """
+    cleaned: List[str] = []
+    seen = set()
+
+    for item in raw:
+        keyword = " ".join(str(item).replace("_", " ").replace("-", " ").split()).lower()
+        keyword = keyword.strip(" .,;:!?\"'")
+        if keyword and keyword not in seen:
+            seen.add(keyword)
+            cleaned.append(keyword)
+
+    return cleaned[:limit]
 
 
 def self_test(model: Optional[str] = None, host: str = DEFAULT_HOST) -> bool:

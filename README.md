@@ -128,6 +128,12 @@ Use `qwen3-vl:8b-instruct` if you want to get through a large folder faster and 
 willing to work through a bigger Review pile. Do not use the 4B model for culling: it
 approves of everything, so it never makes a mistake and never finds a problem either.
 
+Run through the full pipeline rather than as raw verdicts, both `qwen3-vl:30b-a3b` and
+`gemma4:31b` pass: no original reaches Delete and no ruined frame stays in Keep. The
+photograph `gemma4:31b` wanted to throw away came back as Keep, because no measurement
+corroborated it — which is the two-witness rule doing the exact job it exists for. Run
+`eval_harness.py` to reproduce this on your own photographs.
+
 Two findings worth knowing:
 
 - **Model size is not the story.** `gemma4:31b` is the same weight class as the winner

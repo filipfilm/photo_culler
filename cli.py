@@ -76,6 +76,9 @@ def common_options(func):
         click.option("--no-recursive", is_flag=True, help="Do not descend into subfolders."),
         click.option("--override", is_flag=True,
                      help="Replace existing keywords and descriptions. Ratings are kept."),
+        click.option("--suggest-ratings", is_flag=True,
+                     help="Set a star rating on unrated photos. Off by default; the "
+                          "suggestion is always in the CullerSuggestedRating keyword."),
         click.option("--dry-run", is_flag=True,
                      help="Analyse and report without writing any sidecars."),
         click.option("--csv-file", type=click.Path(), default=None,
@@ -281,10 +284,11 @@ def run_cull(sidecar_style: Optional[str], **kwargs) -> int:
     sidecars_written = 0
     if sidecar_style and not dry_run:
         override = kwargs.get("override", False)
+        suggest_ratings = kwargs.get("suggest_ratings", False)
         for result in tqdm(results, desc="Writing metadata", unit="file"):
             if result.decision == FAILED:
                 continue
-            if write_sidecar(result, sidecar_style, override):
+            if write_sidecar(result, sidecar_style, override, suggest_ratings):
                 sidecars_written += 1
 
     csv_path = (

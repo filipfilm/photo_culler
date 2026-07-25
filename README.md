@@ -95,6 +95,7 @@ Failed because the backend died.
 | `--no-tags` | Skip descriptions and keywords. Roughly twice as fast. |
 | `--no-grouping` | Do not group bursts or demote near-duplicates. |
 | `--override` | Replace existing keywords and descriptions. Ratings are always kept. |
+| `--suggest-ratings` | Set stars on *unrated* photos. Off by default; never overwrites a rating you set. |
 | `--cache-dir` | Where results are cached. Default `~/.cache/photo_culler`; `--no-cache` disables. |
 | `--workers` | Parallel requests to Ollama (see [Speed](#speed)). |
 | `--report/--no-report` | Build the HTML contact sheet next to the CSV (default on). |
@@ -273,6 +274,32 @@ test_formats.py   Accepted formats, and the two extension lists agreeing
 test_no_destructive_operations.py  Proof no code path can touch a photo file
 eval_harness.py   End-to-end check against generated ground truth
 ```
+
+## What gets written where
+
+Three things land on every photo, in both sidecar formats:
+
+**Keywords** — the searchable part. `PhotoCuller:Keep`, `CullerConfidence:0.90`,
+`CullerIssues:soft focus, motion blur`, `CullerSuggestedRating:5`, plus
+`CullerBurst:best-of-6` and `CullerDuplicate:<file>` where they apply, alongside the AI
+keywords and everything that was already there.
+
+**Description** — the plain sentence, in `metadata.Description` (ON1) or
+`dc:description` (XMP).
+
+**The full analysis** — verdict, confidence, sharpness/exposure/framing categories, all
+four scores, the measured sharpness and the model's reasoning. In ON1 that is a JSON
+block at `metadata.PhotoCullerAnalysis`. XMP has no equivalent free-form slot, so it
+goes two places: a `photoculler:` namespace holding each field separately, and a
+readable one-line summary in `photoshop:Instructions`, which is a field Lightroom,
+Bridge and ON1 actually display.
+
+**Star ratings are left alone** unless you pass `--suggest-ratings`, and even then only
+empty ones are filled. The culler's opinion is always available as the
+`CullerSuggestedRating` keyword regardless.
+
+Everything above, plus `subject`, `burst_size`, `best_of_burst` and `duplicate_of`, is
+also in the run's CSV — 21 columns, the complete record.
 
 ## Notes on your photo app
 

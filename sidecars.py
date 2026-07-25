@@ -96,7 +96,9 @@ def analysis_block(result: CullResult) -> Dict[str, str]:
 # ---------------------------------------------------------------------- ON1
 
 
-def write_on1_sidecar(result: CullResult, override: bool = False) -> bool:
+def write_on1_sidecar(
+    result: CullResult, override: bool = False, suggest_ratings: bool = False
+) -> bool:
     """Update the .on1 sidecar beside a photo. Returns False when there is none."""
     on1_file = result.filepath.with_suffix(".on1")
     if not on1_file.exists():
@@ -140,6 +142,10 @@ def write_on1_sidecar(result: CullResult, override: bool = False) -> bool:
     if description and (override or not metadata.get("Description")):
         metadata["Description"] = description
 
+    # Same rule as the XMP writer: only fill an empty slot, and only when asked.
+    if suggest_ratings and not metadata.get("Rating"):
+        metadata["Rating"] = suggested_rating(result.metrics)
+
     metadata["PhotoCullerAnalysis"] = analysis_block(result)
     metadata["MetadataDate"] = datetime.now().strftime("%a %b %d %H:%M:%S %Y")
     metadata.setdefault("MetadataDateOffset", 0)
@@ -154,6 +160,14 @@ def write_on1_sidecar(result: CullResult, override: bool = False) -> bool:
 
 # ---------------------------------------------------------------------- XMP
 
+# The ON1 sidecar carries the full analysis as a JSON block. XMP has no equivalent
+# free-form slot, so the same fields go two places: a photoculler: namespace holding
+# them individually, which survives round-trips and is machine-readable, and a plain
+# sentence in photoshop:Instructions, which is a field Lightroom, Bridge and ON1
+# actually display. Without the second one the analysis is technically present and
+# practically invisible.
+XMP_NAMESPACE = "http://filipfilm.github.io/photo_culler/1.0/"
+
 XMP_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="PhotoCuller">
   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -161,8 +175,10 @@ XMP_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
       xmlns:xmp="http://ns.adobe.com/xap/1.0/"
       xmlns:dc="http://purl.org/dc/elements/1.1/"
       xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"
+      xmlns:photoculler="{namespace}"
       xmp:ModifyDate="{modify_date}"
-      xmp:CreatorTool="PhotoCuller"{rating_attr}>
+      xmp:CreatorTool="PhotoCuller"{rating_attr}
+{analysis_attrs}>
       <dc:subject>
         <rdf:Bag>
 {keywords_xml}
@@ -178,10 +194,35 @@ XMP_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
           <rdf:li xml:lang="x-default">{description}</rdf:li>
         </rdf:Alt>
       </dc:description>
+      <photoshop:Instructions>{instructions}</photoshop:Instructions>
     </rdf:Description>
   </rdf:RDF>
 </x:xmpmeta>
 """
+
+
+def _camel(key: str) -> str:
+    head, *rest = key.split("_")
+    return head + "".join(part.capitalize() for part in rest)
+
+
+def analysis_summary(result: CullResult) -> str:
+    """One readable line for the field a photo app will actually show you."""
+    metrics = result.metrics
+    parts = [
+        f"PhotoCuller: {result.decision} ({result.confidence:.2f})",
+        f"sharpness {metrics.subject_sharpness or '-'}",
+        f"exposure {metrics.exposure or '-'}",
+        f"framing {metrics.framing or '-'}",
+    ]
+    if result.group_size > 1:
+        role = "best" if result.is_best_of_group else "alternate"
+        parts.append(f"burst {role} of {result.group_size}")
+    if result.issues:
+        parts.append("issues: " + ", ".join(result.issues))
+    if metrics.verdict_reason:
+        parts.append(metrics.verdict_reason)
+    return " | ".join(parts)
 
 
 def read_existing_xmp(xmp_file: Path) -> Dict:
@@ -236,7 +277,9 @@ def xmp_path_for(photo: Path) -> Path:
     return replaced
 
 
-def write_xmp_sidecar(result: CullResult, override: bool = False) -> bool:
+def write_xmp_sidecar(
+    result: CullResult, override: bool = False, suggest_ratings: bool = False
+) -> bool:
     """Write a .xmp sidecar next to the photo, preserving existing user metadata."""
     xmp_file = xmp_path_for(result.filepath)
     existing = read_existing_xmp(xmp_file)
@@ -253,26 +296,38 @@ def write_xmp_sidecar(result: CullResult, override: bool = False) -> bool:
     else:
         description = f"PhotoCuller: {result.decision}"
 
-    # Photo apps write 0 to mean "unrated", so that is a slot to fill, not a rating to
-    # preserve. Anything the photographer actually set is left alone.
+    # A star rating is the photographer's own shorthand, so the culler does not get to
+    # invent one unless asked. Its opinion is always available as the
+    # CullerSuggestedRating keyword. An existing rating is never overwritten either way;
+    # 0 means unrated, which is the only slot --suggest-ratings may fill.
     existing_rating = (existing["rating"] or "").strip()
-    rating = (
-        existing_rating
-        if existing_rating and existing_rating != "0"
-        else str(suggested_rating(result.metrics))
-    )
+    has_real_rating = bool(existing_rating) and existing_rating != "0"
+
+    if has_real_rating:
+        rating_attr = f'\n      xmp:Rating="{escape(existing_rating)}"'
+    elif suggest_ratings:
+        rating_attr = f'\n      xmp:Rating="{suggested_rating(result.metrics)}"'
+    else:
+        rating_attr = ""
 
     # Descriptions and keywords are free text straight from a model, so every value has
     # to be escaped -- an unescaped ampersand produces a sidecar no photo app will open.
     keywords_xml = "\n".join(
         f"          <rdf:li>{escape(str(kw))}</rdf:li>" for kw in keywords
     )
+    analysis_attrs = "\n".join(
+        f'      photoculler:{_camel(key)}="{escape(str(value))}"'
+        for key, value in analysis_block(result).items()
+    )
     content = XMP_TEMPLATE.format(
+        namespace=XMP_NAMESPACE,
         modify_date=datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-        rating_attr=f'\n      xmp:Rating="{escape(str(rating))}"',
+        rating_attr=rating_attr,
+        analysis_attrs=analysis_attrs,
         keywords_xml=keywords_xml,
         title=escape(result.filepath.stem),
         description=escape(description),
+        instructions=escape(analysis_summary(result)),
     )
 
     try:
@@ -283,9 +338,11 @@ def write_xmp_sidecar(result: CullResult, override: bool = False) -> bool:
         return False
 
 
-def write_sidecar(result: CullResult, style: str, override: bool = False) -> bool:
+def write_sidecar(
+    result: CullResult, style: str, override: bool = False, suggest_ratings: bool = False
+) -> bool:
     if style == "on1":
-        return write_on1_sidecar(result, override)
+        return write_on1_sidecar(result, override, suggest_ratings)
     if style == "xmp":
-        return write_xmp_sidecar(result, override)
+        return write_xmp_sidecar(result, override, suggest_ratings)
     raise ValueError(f"Unknown sidecar style: {style}")

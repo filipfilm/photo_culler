@@ -32,7 +32,7 @@ except ImportError:
 
 # Bumped whenever prompts, schemas or decision rules change, so that cached results from
 # an older version of the tool are recomputed instead of silently reused.
-ANALYSIS_VERSION = "2"
+ANALYSIS_VERSION = "3"
 
 DEFAULT_EXTENSIONS = (
     ".arw", ".cr2", ".cr3", ".nef", ".orf", ".raf", ".dng", ".rw2", ".jpg", ".jpeg",

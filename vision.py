@@ -126,7 +126,12 @@ film grain, fog, rain, night scenes and low-contrast or minimal compositions are
 creative choices, not faults. Only the intended main subject needs to be sharp; a soft
 background is normal and good.
 
-subject_sharpness - how sharp is the MAIN SUBJECT only, ignoring the background:
+subject - name what the photograph is actually of, in a few plain words: "two boys
+eating ice cream", "woman in a black swimsuit", "empty beach at dusk". This is the thing
+the sharpness judgement below is about, so be specific about which element it is. Never
+answer with the words "main subject".
+
+subject_sharpness - how sharp is that subject only, ignoring the background:
   sharp       critically sharp, would hold up printed large
   acceptable  slightly soft but perfectly usable
   soft        noticeably soft; usable only small, or if the moment is special

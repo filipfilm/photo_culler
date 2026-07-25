@@ -57,6 +57,18 @@ OVERVIEW_EDGE = 1280
 # can see actual pixel-level detail rather than a downsample of it.
 DETAIL_CROP = 768
 
+# Context window requested from Ollama.
+#
+# This matters far more than it looks. Left to itself Ollama sizes the context from the
+# model's maximum -- 262,144 tokens for qwen3-vl -- and reserves memory to match, which
+# took a 20GB model to 46GB resident and pushed a 64GB machine into swap. Inference then
+# runs at disk speed: measured 5s per photograph, with the GPU idling at 1%.
+#
+# One photograph plus its detail crop and the prompt measured 2,119 tokens. Asking for
+# 8192 leaves generous headroom, holds the same model at 19.8GB, and made the identical
+# request take 0.6s.
+CONTEXT_TOKENS = 8192
+
 TRIAGE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -105,8 +117,7 @@ CANARY_SCHEMA = {
 
 TRIAGE_PROMPT = """You are helping a photographer sort through a shoot.
 
-You are given two views of ONE photograph: first the full frame, then a 100% centre crop
-of the same photograph showing pixel-level detail.
+{views}
 
 Judge the photograph on its own terms. Shallow depth of field, deliberate motion blur,
 film grain, fog, rain, night scenes and low-contrast or minimal compositions are
@@ -150,6 +161,12 @@ now. Do not comment on sharpness, exposure or image quality.
 keywords: 5 to 10 short lowercase search terms covering subject, objects, type of
 location, activity, time of day or lighting, dominant colours, and mood. Single words or
 short phrases, no punctuation, no quality judgements."""
+
+VIEWS_WITH_CROP = (
+    "You are given two views of ONE photograph: first the full frame, then a 100% centre "
+    "crop of the same photograph showing pixel-level detail."
+)
+VIEWS_SINGLE = "You are given one photograph."
 
 CANARY_COLOURS = {
     "red": (220, 30, 30),
@@ -208,10 +225,12 @@ class OllamaVisionAnalyzer:
         timeout: int = 180,
         verify_vision: bool = True,
         use_detail_crop: bool = True,
+        context_tokens: int = CONTEXT_TOKENS,
     ):
         self.host = host.rstrip("/")
         self.timeout = timeout
         self.use_detail_crop = use_detail_crop
+        self.context_tokens = context_tokens
         self.logger = logging.getLogger(__name__)
 
         self.model = model or detect_vision_model(self.host)
@@ -339,7 +358,7 @@ class OllamaVisionAnalyzer:
             "prompt": prompt,
             "images": images,
             "stream": False,
-            "options": {"temperature": 0},
+            "options": {"temperature": 0, "num_ctx": self.context_tokens},
         }
         if schema:
             payload["format"] = schema
@@ -375,7 +394,11 @@ class OllamaVisionAnalyzer:
 
     def triage(self, image: Image.Image) -> ImageMetrics:
         """Quality judgement for one photograph. Raises on failure -- never guesses."""
-        triage_data = self._generate_json(TRIAGE_PROMPT, self._views(image), TRIAGE_SCHEMA)
+        views = self._views(image)
+        prompt = TRIAGE_PROMPT.format(
+            views=VIEWS_WITH_CROP if len(views) > 1 else VIEWS_SINGLE
+        )
+        triage_data = self._generate_json(prompt, views, TRIAGE_SCHEMA)
 
         cv_stats = self.blur_detector.measure(image)
         exposure_stats = self.exposure_meter.measure(image)

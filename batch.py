@@ -51,6 +51,7 @@ class BatchCuller:
         timeout: int = 180,
         with_tags: bool = True,
         verify_vision: bool = True,
+        context_tokens: int = 8192,
         learning_enabled: bool = False,
     ):
         self.cache_dir = cache_dir
@@ -82,6 +83,7 @@ class BatchCuller:
                 host=ollama_host,
                 timeout=timeout,
                 verify_vision=verify_vision,
+                context_tokens=context_tokens,
             )
             self.ollama_model = self.analyzer.model
         else:

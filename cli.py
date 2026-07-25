@@ -224,7 +224,9 @@ def run_cull(sidecar_style: Optional[str], **kwargs) -> int:
     detail = kwargs.get("detail", False)
 
     host = kwargs.get("host") or config.host
-    workers = kwargs.get("workers") or config.workers
+    # Fast mode is CPU-only and parallelises freely; the model path does not (see the
+    # workers comment in config.yaml).
+    workers = kwargs.get("workers") or (config.fast_workers if fast else config.workers)
     extensions = config.normalized_extensions(kwargs.get("extensions"))
     recursive = config.recursive and not kwargs.get("no_recursive", False)
     with_tags = config.tagging and not kwargs.get("no_tags", False)
@@ -257,6 +259,7 @@ def run_cull(sidecar_style: Optional[str], **kwargs) -> int:
             ollama_model=model,
             ollama_host=host,
             timeout=config.timeout_seconds,
+            context_tokens=config.context_tokens,
             with_tags=with_tags,
             verify_vision=config.verify_vision and not kwargs.get("skip_vision_check", False),
         )

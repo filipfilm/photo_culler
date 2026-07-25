@@ -94,6 +94,7 @@ def main(folder, model, count, measurement_only, keep_files):
     try:
         culler = BatchCuller(
             mode="fast" if measurement_only else "accurate",
+            max_workers=8 if measurement_only else 1,
             use_ollama=not measurement_only,
             ollama_model=model,
             with_tags=False,

@@ -1,177 +1,123 @@
-# Ollama Vision Setup for Photo Culler 🦙
+# Ollama setup
 
-This guide shows how to set up Ollama as the vision backend for accurate photo analysis.
+The culler talks to a vision model running locally through [Ollama](https://ollama.com).
+Nothing leaves your machine.
 
-## Why Ollama? 
-
-✅ **No PyTorch dependency conflicts**  
-✅ **Works on both CPU and GPU**  
-✅ **Local processing (privacy)**  
-✅ **Multiple model options**  
-✅ **Easy to install and use**  
-
-## Installation Steps
-
-### 1. Install Ollama
-
-Visit https://ollama.ai and download Ollama for your platform, or:
+## 1. Install Ollama
 
 ```bash
-# macOS/Linux
-curl -fsSL https://ollama.ai/install.sh | sh
-
-# Windows
-# Download from https://ollama.ai
+# macOS / Linux
+curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-### 2. Start Ollama Service
+Windows and a macOS app are available from https://ollama.com. The macOS app starts the
+server automatically; otherwise run `ollama serve`.
+
+## 2. Pull a vision model
+
+The model **must** have a vision encoder. A text-only model cannot see the photograph
+and will invent its answers.
 
 ```bash
-# Start Ollama (runs on localhost:11434 by default)
-ollama serve
+ollama pull qwen3-vl:30b-a3b-instruct   # 20 GB - best tested, needs ~32 GB RAM
+ollama pull qwen3-vl:8b-instruct        #  6 GB - faster, larger Review pile
 ```
 
-### 3. Install Vision Model
+Leave `model.name` blank in `config.yaml` and the culler picks the best installed model
+on its own.
 
-Choose a vision model. Gemma 4 is the default path in this repo:
+## 3. Verify
 
 ```bash
-# Recommended default
-ollama pull gemma4:e4b
-
-# Alternatives:
-ollama pull gemma4        # Alias for the default Gemma 4 variant
-ollama pull gemma4:26b    # Better quality, slower
-ollama pull gemma4:31b    # Largest model, highest resource use
+python vision.py
 ```
 
-### 4. Verify Installation
+This sends the model a randomly generated coloured shape and checks it comes back
+correctly described:
 
-Test that Ollama is working:
+```
+INFO - Vision check passed: qwen3-vl:30b-a3b-instruct correctly saw a red triangle
+OK - qwen3-vl:30b-a3b-instruct is reachable and can see images.
+```
+
+The same check runs at the start of every culling run. If it fails, the run stops rather
+than producing scores for photographs nothing looked at.
+
+To test a specific model:
 
 ```bash
-# Test with a simple query
-ollama run gemma4:e4b
+python vision.py qwen3-vl:8b-instruct
 ```
 
-You should see a chat interface. Type `/bye` to exit.
+## Which model
 
-## Using with Photo Culler
+Measured on a Mac Studio M4 Max / 64 GB against 32 images with known ground truth. See
+the README for the full table.
 
-### Basic Usage
+| Model | Size | False deletes | Caught | Speed |
+|---|---|---|---|---|
+| `qwen3-vl:4b-instruct` | 3.3 GB | 0/8 | 3/24 | 3.9 s |
+| `qwen3-vl:8b-instruct` | 6.1 GB | 0/8 | 12/24 | 6.3 s |
+| **`qwen3-vl:30b-a3b-instruct`** | 20 GB | **0/8** | **24/24** | **5.0 s** |
+| `gemma4:31b` | 19 GB | 1/8 | 17/24 | 14.5 s |
+
+`qwen3-vl:30b-a3b-instruct` is a mixture-of-experts model: 30B parameters stored, about
+3B active per token. That is why it beats a dense 31B model on quality *and* runs three
+times faster.
+
+Rough memory guidance: allow the model's file size plus a few GB. A 20 GB model is
+comfortable on 32 GB and easy on 64 GB.
+
+## Going faster
+
+One Ollama server handles concurrent requests; the multiple-servers-on-different-ports
+approach an earlier version of this project recommended was never necessary and is not
+supported by the `ollama serve` flags it suggested.
 
 ```bash
-# Use Ollama in the ON1 workflow
-python culler_on1.py /path/to/photos
-
-# Specify which Ollama model to use
-python culler_on1.py /path/to/photos --ollama-model gemma4:26b
-
-# Combine with other options
-python culler_universal.py /path/to/photos --cache-dir ~/.cache --ollama-model gemma4:e4b
+OLLAMA_NUM_PARALLEL=4 ollama serve
+python culler_universal.py ~/Photos/Shoot --workers 4
 ```
 
-### Configuration Options
+Other levers:
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--use-ollama / --no-ollama` | Ollama on | Enable or disable Ollama vision analysis |
-| `--ollama-model` | `gemma4:e4b` | Which Ollama model to use |
-
-### Performance Tips
-
-**Model Selection:**
-- `gemma4:e4b` - Best default balance of speed and quality
-- `gemma4:26b` - Better quality, more RAM/VRAM
-- `gemma4:31b` - Highest quality, heaviest model
-
-**Batch Size:**
-- Smaller batch sizes (2-4) for CPU processing
-- Larger batch sizes (8-16) if you have GPU with lots of VRAM
-
-**Hardware Recommendations:**
-- **CPU**: 16GB+ RAM, any modern processor
-- **GPU**: More memory helps significantly for `gemma4:26b` and `gemma4:31b`
+```bash
+--no-tags                        # skip descriptions/keywords, roughly twice as fast
+--cache-dir ~/.cache/photo_culler  # re-runs only analyse what changed
+--fast                           # no model at all, ~0.2 s/photo, never deletes
+```
 
 ## Troubleshooting
 
-### "Cannot connect to Ollama"
-```bash
-# Make sure Ollama is running
-ollama serve
+**"Cannot reach Ollama"** — start it with `ollama serve`, then check
+`curl http://localhost:11434/api/tags`.
 
-# Check if it's accessible
-curl http://localhost:11434/api/tags
-```
+**"No vision-capable model found"** — pull one of the models above. The culler will not
+download a 20 GB model behind your back.
 
-### "Model not found"
-```bash
-# List available models
-ollama list
+**"Model X cannot see images"** — the model has no vision encoder. The error names what
+the test image was and what the model claimed to see. Pick a `qwen3-vl` or `gemma4`
+build.
 
-# Pull the model if missing
-ollama pull gemma4:e4b
-```
+**"Multimodal data provided, but model does not support multimodal requests"** — same
+cause, reported by Ollama itself. Some Ollama versions raise this; others quietly ignore
+the image, which is exactly why the startup check exists.
 
-### "Ollama query failed"
-- Check Ollama logs: `ollama logs`
-- Restart Ollama service
-- Try a different model: `--ollama-model gemma4:26b`
+**Everything lands in Review** — expected with a small model. Deleting needs two
+independent witnesses, and a weak model rarely provides a confident first one. Move up
+to `qwen3-vl:30b-a3b-instruct`.
 
-### Slow Processing
-```bash
-# Use the ON1 workflow
-python culler_on1.py /photos
+## Custom host
 
-# Use a larger model
-python culler_on1.py /photos --ollama-model gemma4:26b
-```
-
-## Comparison: CLIP vs Ollama
-
-| Feature | CLIP | Ollama |
-|---------|------|--------|
-| **Setup** | Complex (PyTorch deps) | Simple (single install) |
-| **Speed** | Fast (~1s/image GPU) | Medium (~3s/image) |
-| **Accuracy** | Good (85-90%) | Excellent (90-95%) |
-| **Hardware** | GPU recommended | CPU/GPU both work |
-| **Dependencies** | Heavy (PyTorch) | Light (HTTP requests) |
-| **Privacy** | Local processing | Local processing |
-
-## Example Workflow
-
-```bash
-# 1. Install Ollama and model
-curl -fsSL https://ollama.ai/install.sh | sh
-ollama serve &
-ollama pull gemma4:e4b
-
-# 2. Install Python dependencies
-pip install -r requirements.txt
-pip install -r requirements_photo.txt
-
-# 3. Run photo culler
-python culler_universal.py ~/Photos/vacation_2024 \
-  --cache-dir ~/.cache/photo_culler \
-  --ollama-model gemma4:e4b
-```
-
-## Advanced Usage
-
-### Custom Ollama Host
 ```python
-# If running Ollama on different host/port
-from ollama_vision import OllamaVisionAnalyzer
+from vision import OllamaVisionAnalyzer
 
 analyzer = OllamaVisionAnalyzer(
-    model="gemma4:e4b",
-    host="http://192.168.1.100:11434"
+    model="qwen3-vl:30b-a3b-instruct",
+    host="http://192.168.1.100:11434",
 )
 ```
 
-### Custom Prompts
-Edit `ollama_vision.py` to customize the analysis prompts for your specific needs.
+Or set `model.host` in `config.yaml`, or pass `--host`.
 
----
-
-🎯 **Ready to cull photos with AI vision!** The Ollama setup gives you state-of-the-art photo analysis without the dependency headaches.
+Prompts and JSON schemas live at the top of `vision.py`.

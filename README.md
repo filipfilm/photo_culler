@@ -101,43 +101,57 @@ Scores still appear in the CSV and sidecars, derived from the categories, for so
 
 ## Choosing a model
 
-Measured on a 32-image set with known ground truth (8 real photographs, each also
-supplied heavily defocused, three stops under, and three stops over) on a Mac Studio
-M4 Max / 64 GB. "Caught" means a ruined frame did not end up in Keep.
+Measured on a Mac Studio M4 Max / 64 GB against a 32-image ground-truth set: 8 real
+photographs, each also supplied heavily defocused, three stops under and three stops
+over. These are the models' **raw verdicts**, before the decision layer's safety net, so
+they show what each model actually perceives. "Caught" means a ruined frame was not
+approved.
 
 | Model | Size | False deletes | Caught | Speed |
 |---|---|---|---|---|
 | `qwen3-vl:4b-instruct` | 3.3 GB | 0/8 | 3/24 | 3.9 s |
 | `qwen3-vl:8b-instruct` | 6.1 GB | 0/8 | 12/24 | 6.3 s |
-| `qwen3-vl:30b-a3b-instruct` | 20 GB | see below | see below | ~5 s |
+| **`qwen3-vl:30b-a3b-instruct`** | 20 GB | **0/8** | **24/24** | **5.0 s** |
+| `gemma4:31b` | 19 GB | 1/8 | 17/24 | 14.5 s |
 
-The 4B model is not usable for culling: it approves of everything, so it never makes a
-mistake and never finds a problem either.
+**Recommendation for a 64 GB M4 Max: `qwen3-vl:30b-a3b-instruct`.** It was perfect on
+both criteria and three times faster than `gemma4:31b`. It is a mixture-of-experts
+model with roughly 3B parameters active per token, so it runs at about the speed of an
+8B model while judging like a much larger one, and 20 GB of weights sits comfortably in
+64 GB of unified memory.
 
-**Recommendation for a 64 GB M4 Max: `qwen3-vl:30b-a3b-instruct`.** It is a
-mixture-of-experts model with only ~3B parameters active per token, so it runs at
-roughly the speed of an 8B model while judging like a much larger one, and 20 GB of
-weights sits comfortably in 64 GB of unified memory. Use `qwen3-vl:8b-instruct` when you
-want to get through a wedding-sized folder quickly.
+Use `qwen3-vl:8b-instruct` if you want to get through a large folder faster and are
+willing to work through a bigger Review pile. Do not use the 4B model for culling: it
+approves of everything, so it never makes a mistake and never finds a problem either.
 
-Note that all of these models read *exposure* poorly — they will call a three-stop
-underexposure "good". That is why exposure is measured from the histogram and the
-measurement overrides the model. Sharpness is the opposite: models judge it well and
-measurement is the cross-check.
+Two findings worth knowing:
+
+- **Model size is not the story.** `gemma4:31b` is the same weight class as the winner
+  but was slower, less accurate, and the only model to throw away a good photograph.
+- **All of these models read exposure poorly** — they will call a three-stop
+  underexposure "good". That is why exposure is measured from the histogram and the
+  measurement overrides the model. Sharpness is the reverse: models judge it well and
+  the measurement is the cross-check.
 
 ## Speed
 
 Roughly 5–7 s per photo with tagging on, half that with `--no-tags`, and about 0.2 s in
 `--fast` mode.
 
-To use more than one worker, Ollama itself has to be allowed to run requests in
-parallel — one server handles them concurrently, so the old advice about starting
-several servers on different ports was never necessary:
+**Do not reach for `--workers` first.** It defaults to 1 for the model path on purpose.
+Ollama gives every parallel slot its own context, so asking `qwen3-vl:30b-a3b-instruct`
+for four of them took it from 20 GB of weights to 46 GB resident on a 64 GB machine,
+which pushed the system into swap and left the GPU idling at under 1% while it waited on
+the disk. One request already keeps Apple Silicon busy. If you do want to try it, give
+Ollama matching permission and watch memory:
 
 ```bash
-OLLAMA_NUM_PARALLEL=4 ollama serve
-python culler_universal.py ~/Photos/Shoot --workers 4
+OLLAMA_NUM_PARALLEL=2 ollama serve
+python culler_universal.py ~/Photos/Shoot --workers 2
 ```
+
+`--fast` mode is different — it loads no model and is plain CPU work, so it defaults to
+8 workers and chews through RAW files at about 0.2 s each.
 
 Use `--cache-dir ~/.cache/photo_culler` so re-running a folder only analyses what
 changed.
@@ -171,6 +185,24 @@ from defocused copies (0.00) with nothing in between.
 The signal is still only trusted in one direction. A high score is real evidence of
 detail; a low score might just be fog. So it can veto a deletion but never cause one.
 
+## Checking it still works
+
+Two levels, both worth running after changing anything:
+
+```bash
+# Decision-logic invariants. No model needed, runs instantly.
+python test_decision.py
+
+# End to end against your own photographs. Builds a ground-truth set by taking
+# real frames and also defocusing / under- / overexposing them, then checks that
+# no original is ever sent to Delete.
+python eval_harness.py ~/Photos/some-folder
+python eval_harness.py ~/Photos/some-folder --model qwen3-vl:8b-instruct
+```
+
+The harness generates its images in a temporary directory and never writes to the
+folder you point it at.
+
 ## Files
 
 ```
@@ -186,6 +218,8 @@ config.py         Reads config.yaml
 cli.py            Shared command line
 culler_on1.py     Entry point, ON1 sidecars
 culler_universal.py  Entry point, XMP sidecars
+test_decision.py  Invariants for the two-witness rule
+eval_harness.py   End-to-end check against generated ground truth
 ```
 
 ## Notes on your photo app

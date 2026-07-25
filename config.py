@@ -32,8 +32,10 @@ class Config:
     host: str = "http://localhost:11434"
     timeout_seconds: int = 300
     verify_vision: bool = True
+    context_tokens: int = 8192
 
-    workers: int = 4
+    workers: int = 1
+    fast_workers: int = 8
     tagging: bool = True
     recursive: bool = True
 
@@ -70,9 +72,11 @@ class Config:
         config.host = model.get("host", config.host)
         config.timeout_seconds = int(model.get("timeout_seconds", config.timeout_seconds))
         config.verify_vision = bool(model.get("verify_vision", config.verify_vision))
+        config.context_tokens = max(2048, int(model.get("context_tokens", config.context_tokens)))
 
         processing = data.get("processing") or {}
         config.workers = max(1, int(processing.get("workers", config.workers)))
+        config.fast_workers = max(1, int(processing.get("fast_workers", config.fast_workers)))
         config.tagging = bool(processing.get("tagging", config.tagging))
         config.recursive = bool(processing.get("recursive", config.recursive))
 

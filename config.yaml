@@ -14,10 +14,26 @@ model:
   # is not recommended: a model without a vision encoder returns invented judgements.
   verify_vision: true
 
+  # Context window requested from Ollama. Leave this alone unless analysis starts
+  # failing on unusually large images.
+  #
+  # Ollama otherwise sizes the context from the model's maximum, which for qwen3-vl is
+  # 262,144 tokens, and reserves memory accordingly: a 20GB model became 46GB resident
+  # and the machine swapped. One photograph plus its detail crop measures around 2,100
+  # tokens, so this is already generous, and it keeps the same model at 19.8GB.
+  context_tokens: 8192
+
 processing:
-  # Parallel requests to Ollama. Raising this only helps if Ollama itself is allowed to
-  # run requests in parallel -- set OLLAMA_NUM_PARALLEL to a matching value.
-  workers: 4
+  # Parallel requests to the vision model. One is the right default: Ollama gives each
+  # parallel slot its own context, so a 20GB model asked for four of them wanted 46GB on
+  # a 64GB machine, started swapping, and got dramatically slower. A single request
+  # already keeps the GPU busy on Apple Silicon.
+  #
+  # Raise it only with memory to spare, and set OLLAMA_NUM_PARALLEL to match.
+  workers: 1
+
+  # Fast mode is plain CPU work with no model loaded, so it parallelises freely.
+  fast_workers: 8
 
   # Generate descriptions and keywords for frames that are not being rejected.
   # Roughly doubles the time per photo.

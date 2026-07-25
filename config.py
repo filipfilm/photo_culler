@@ -45,7 +45,15 @@ class Config:
     sharp_evidence_vetoes_delete: bool = True
 
     csv_dir: str = "cull_runs"
+    # Caching is on by default: at five-plus seconds per photograph, losing a
+    # half-finished overnight run to a crash or a Ctrl-C is the expensive accident.
+    cache_dir: str = "~/.cache/photo_culler"
     extensions: List[str] = field(default_factory=lambda: list(DEFAULT_EXTENSIONS))
+
+    def resolved_cache_dir(self) -> Optional[Path]:
+        if not self.cache_dir:
+            return None
+        return Path(self.cache_dir).expanduser()
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "Config":
@@ -93,6 +101,9 @@ class Config:
 
         output = data.get("output") or {}
         config.csv_dir = output.get("csv_dir", config.csv_dir)
+        cache = data.get("cache") or {}
+        if "dir" in cache:
+            config.cache_dir = cache["dir"] or ""
         extensions = output.get("extensions")
         if extensions:
             config.extensions = [

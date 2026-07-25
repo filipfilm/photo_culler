@@ -62,7 +62,9 @@ def common_options(func):
                      help="Ollama vision model. Default: auto-detect the best installed one."),
         click.option("--host", default=None, help="Ollama host URL."),
         click.option("--cache-dir", type=click.Path(), default=None,
-                     help="Reuse analysis for unchanged files across runs."),
+                     help="Where analysis results are cached. Default: ~/.cache/photo_culler."),
+        click.option("--no-cache", is_flag=True,
+                     help="Disable the analysis cache and recompute everything."),
         click.option("--extensions", default=None,
                      help="Comma-separated list, e.g. nef,jpg. Default comes from config.yaml."),
         click.option("--workers", type=int, default=None,
@@ -78,6 +80,8 @@ def common_options(func):
                      help="Analyse and report without writing any sidecars."),
         click.option("--csv-file", type=click.Path(), default=None,
                      help="Write results here instead of a timestamped file in cull_runs/."),
+        click.option("--report/--no-report", "report", default=True,
+                     help="Build an HTML contact sheet next to the CSV (default on)."),
         click.option("--detail", is_flag=True, help="Print every photo as it is decided."),
         click.option("--verbose", is_flag=True, help="Debug logging."),
         click.option("--skip-vision-check", is_flag=True,
@@ -218,11 +222,20 @@ def run_cull(sidecar_style: Optional[str], **kwargs) -> int:
     print(f"  sidecars    {sidecar_style or 'none'}{' (dry run)' if dry_run else ''}")
     print(f"  grouping    {'on' if grouping else 'off'}"
           + ("" if IMAGEHASH_AVAILABLE else "  [ImageHash missing: time-only grouping]"))
+    if kwargs.get("no_cache"):
+        print("  cache       off (recomputing everything)")
     print("=" * 62)
+
+    if kwargs.get("no_cache"):
+        cache_dir = None
+    elif kwargs.get("cache_dir"):
+        cache_dir = Path(kwargs["cache_dir"])
+    else:
+        cache_dir = config.resolved_cache_dir()
 
     try:
         culler = BatchCuller(
-            cache_dir=Path(kwargs["cache_dir"]) if kwargs.get("cache_dir") else None,
+            cache_dir=cache_dir,
             mode="fast" if fast else "accurate",
             max_workers=workers,
             use_ollama=not fast,
@@ -254,6 +267,12 @@ def run_cull(sidecar_style: Optional[str], **kwargs) -> int:
     )
     elapsed = (datetime.now() - started).total_seconds()
 
+    if culler.aborted_reason:
+        print(f"\n  ⚠️  RUN STOPPED EARLY: {culler.aborted_reason}")
+        print(f"  Writing results for the {len(results)} photographs that did finish.\n")
+    if not results:
+        return 1
+
     if detail:
         print()
         for result in results:
@@ -284,6 +303,19 @@ def run_cull(sidecar_style: Optional[str], **kwargs) -> int:
             print("    (ON1 must have created a .on1 file before the culler can update it)")
     if not dry_run:
         print(f"  results: {csv_path}")
+        if kwargs.get("report", True):
+            try:
+                from .report import generate_report
+            except ImportError:
+                from report import generate_report
+            try:
+                report_path = generate_report(csv_path)
+                print(f"  visual report: open '{report_path}'")
+            except Exception as e:
+                print(f"  (could not build visual report: {e})")
+    else:
+        print("  dry run: no CSV or report written; run without --dry-run, or use "
+              "report.py on a previous run")
 
     print(f"\n  Search your photo app for PhotoCuller:Review to work through the "
           f"{sum(1 for r in results if r.decision == REVIEW)} uncertain frames.")

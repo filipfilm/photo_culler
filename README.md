@@ -67,7 +67,19 @@ python culler_universal.py ~/Photos/Shoot --dry-run --detail
 python culler_universal.py ~/Photos/Shoot --fast
 ```
 
-Results also go to a timestamped CSV in `<folder>/cull_runs/`.
+Results go to a timestamped CSV in `<folder>/cull_runs/`, plus an HTML contact sheet
+next to it — every reject with a large thumbnail and its reasons, the Review pile split
+into burst alternates versus genuinely flagged frames, and the Keeps as a grid for
+spot-checking. Rebuild one any time with `python report.py <folder>`.
+
+## Long runs are safe to interrupt
+
+Analysis is cached per photograph (default `~/.cache/photo_culler`), so a crash, a
+Ctrl-C or a sleep-lid moment costs nothing: re-run the same command and it resumes where
+it stopped, at cache speed. An interrupted run still writes its CSV for whatever
+finished. Transient Ollama hiccups are retried once; if ten photographs fail in a row
+the run stops and says so, rather than burning hours marking the rest of the folder
+Failed because the backend died.
 
 ### Options
 
@@ -79,8 +91,9 @@ Results also go to a timestamped CSV in `<folder>/cull_runs/`.
 | `--no-tags` | Skip descriptions and keywords. Roughly twice as fast. |
 | `--no-grouping` | Do not group bursts or demote near-duplicates. |
 | `--override` | Replace existing keywords and descriptions. Ratings are always kept. |
-| `--cache-dir` | Reuse analysis for unchanged files across runs. |
+| `--cache-dir` | Where results are cached. Default `~/.cache/photo_culler`; `--no-cache` disables. |
 | `--workers` | Parallel requests to Ollama (see [Speed](#speed)). |
+| `--report/--no-report` | Build the HTML contact sheet next to the CSV (default on). |
 | `--detail` | Print every photo as it is decided. |
 
 Defaults live in `config.yaml` and every one of them is actually read; flags override it.
@@ -243,6 +256,7 @@ grouping.py       Burst and near-duplicate grouping
 batch.py          Folder orchestration, caching, threading
 extractor.py      RAW and standard image loading, capture times
 sidecars.py       ON1 .on1 and standard .xmp writers
+report.py         HTML contact-sheet report for reviewing a run
 config.py         Reads config.yaml
 cli.py            Shared command line
 culler_on1.py     Entry point, ON1 sidecars

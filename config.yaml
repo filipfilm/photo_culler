@@ -54,6 +54,11 @@ decisions:
   # model calls it soft. Protects shallow depth of field, fog and minimal compositions.
   sharp_evidence_vetoes_delete: true
 
+# Analysis results are cached per file so an interrupted run resumes where it stopped
+# and re-runs only analyse what changed. Set to an empty value to disable.
+cache:
+  dir: ~/.cache/photo_culler
+
 output:
   # Written next to the photos unless an absolute path is given.
   csv_dir: cull_runs

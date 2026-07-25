@@ -38,6 +38,19 @@ DEFAULT_EXTENSIONS = (
     ".arw", ".cr2", ".cr3", ".nef", ".orf", ".raf", ".dng", ".rw2", ".jpg", ".jpeg",
 )
 
+# Seconds to wait before the single retry of a failed analysis.
+RETRY_DELAY_SECONDS = 3.0
+
+# Consecutive failures that abort the run. When Ollama itself has died, every remaining
+# photograph fails in milliseconds - without this a 5,000-photo run would "complete"
+# with 4,500 of them marked Failed. Ten in a row is not what a corrupt file looks like;
+# it is what a dead backend looks like.
+CONSECUTIVE_FAILURE_LIMIT = 10
+
+
+class AnalysisBackendDown(RuntimeError):
+    """Raised mid-run when every recent analysis has failed and continuing is pointless."""
+
 
 class BatchCuller:
     def __init__(
@@ -72,6 +85,7 @@ class BatchCuller:
 
         self._session_results: List[CullResult] = []
         self._session_summary_cache: Optional[Dict] = None
+        self.aborted_reason: Optional[str] = None
 
         if self.mode not in {"accurate", "fast"}:
             raise ValueError(f"Unsupported mode: {mode}. Use 'accurate' or 'fast'.")
@@ -226,7 +240,17 @@ class BatchCuller:
             if self.mode == "fast":
                 metrics = self._analyze_fast(image)
             else:
-                metrics = self.analyzer.analyze(image, with_tags=self.with_tags)
+                # One retry, because over a multi-hour run the occasional request will
+                # die to a timeout or an Ollama restart, and without this each of those
+                # blips permanently writes off a photograph as Failed.
+                try:
+                    metrics = self.analyzer.analyze(image, with_tags=self.with_tags)
+                except Exception as first_error:
+                    self.logger.warning(
+                        f"Analysis failed for {filepath.name} ({first_error}); retrying once"
+                    )
+                    time.sleep(RETRY_DELAY_SECONDS)
+                    metrics = self.analyzer.analyze(image, with_tags=self.with_tags)
 
             decision, confidence, issues = self.decider.decide(metrics)
             result = CullResult(
@@ -281,8 +305,14 @@ class BatchCuller:
 
         self.logger.info(f"Found {len(image_files)} images to process")
         results: List[CullResult] = []
+        consecutive_failures = 0
+        aborted: Optional[str] = None
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+        # Both an interrupt and a dead backend end the run the same way: whatever
+        # finished is returned so the caller can still write its CSV, and (with a cache
+        # directory) the next invocation resumes from where this one stopped.
+        executor = ThreadPoolExecutor(max_workers=self.max_workers)
+        try:
             futures = {
                 executor.submit(self._process_single_image, path): path for path in image_files
             }
@@ -300,6 +330,29 @@ class BatchCuller:
                     if progress_callback:
                         progress_callback(result)
                     pbar.update(1)
+
+                    if result.decision == FAILED:
+                        consecutive_failures += 1
+                        if consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT:
+                            aborted = (
+                                f"{consecutive_failures} photographs failed in a row - "
+                                "the analysis backend has probably died. "
+                                "Check Ollama, then re-run; finished work is cached."
+                            )
+                            break
+                    else:
+                        consecutive_failures = 0
+        except KeyboardInterrupt:
+            aborted = (
+                f"interrupted after {len(results)}/{len(image_files)} photographs; "
+                "finished work is cached, re-run to resume"
+            )
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        self.aborted_reason = aborted
+        if aborted:
+            self.logger.error(f"Run stopped early: {aborted}")
 
         if group_bursts:
             self.grouping_summary = annotate_results(

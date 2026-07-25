@@ -365,6 +365,10 @@ class OllamaVisionAnalyzer:
             "prompt": prompt,
             "images": images,
             "stream": False,
+            # Ollama unloads an idle model after five minutes. A long pause mid-run (a
+            # huge RAW decode, the machine sleeping briefly) would then pay the full
+            # model reload on the next photograph, so ask for a longer leash.
+            "keep_alive": "30m",
             "options": {"temperature": 0, "num_ctx": self.context_tokens},
         }
         if schema:

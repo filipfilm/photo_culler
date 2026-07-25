@@ -39,6 +39,25 @@ DEFOCUS_RADIUS = 14
 UNDEREXPOSE = 0.13
 OVEREXPOSE = 3.2
 
+WORKDIR_PREFIX = "photo_culler_eval_"
+
+
+def discard_workdir(workdir: Path):
+    """Remove the harness's own scratch directory, and refuse to remove anything else.
+
+    This module is the one place in the project allowed to delete a directory, so the
+    call is fenced: it must be a directory this harness created, under the system temp
+    dir, carrying our prefix. A mistyped path cannot reach a photo library from here.
+    """
+    resolved = workdir.resolve()
+    temp_root = Path(tempfile.gettempdir()).resolve()
+
+    if not resolved.is_relative_to(temp_root) or not resolved.name.startswith(WORKDIR_PREFIX):
+        raise RuntimeError(f"refusing to remove {resolved}: not a harness scratch directory")
+
+    shutil.rmtree(resolved, ignore_errors=True)
+
+
 VARIANTS = {
     "original": lambda img: img,
     "defocus": lambda img: img.filter(ImageFilter.GaussianBlur(DEFOCUS_RADIUS)),
@@ -86,7 +105,7 @@ def main(folder, model, count, measurement_only, keep_files):
         click.echo(f"No photographs found in {folder}")
         sys.exit(1)
 
-    workdir = Path(tempfile.mkdtemp(prefix="photo_culler_eval_"))
+    workdir = Path(tempfile.mkdtemp(prefix=WORKDIR_PREFIX))
     click.echo(f"Building ground-truth set from {len(sources)} photographs...")
     truth = build_set(sources, workdir)
     click.echo(f"  {len(truth)} images in {workdir}\n")
@@ -101,7 +120,7 @@ def main(folder, model, count, measurement_only, keep_files):
         )
     except Exception as e:
         click.echo(f"Could not start the culler:\n{e}")
-        shutil.rmtree(workdir, ignore_errors=True)
+        discard_workdir(workdir)
         sys.exit(1)
 
     click.echo(f"mode: {'fast (measurement only)' if measurement_only else culler.ollama_model}\n")
@@ -159,7 +178,7 @@ def main(folder, model, count, measurement_only, keep_files):
     if keep_files:
         click.echo(f"  generated images left in {workdir}")
     else:
-        shutil.rmtree(workdir, ignore_errors=True)
+        discard_workdir(workdir)
 
     sys.exit(0 if ok else 1)
 

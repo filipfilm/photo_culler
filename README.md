@@ -8,11 +8,22 @@ stays in Keep.
 Everything runs on your own machine through [Ollama](https://ollama.com). No cloud, no
 API keys, no photographs leaving the computer.
 
-## The one rule that shapes everything
+## It cannot delete your photographs
 
-**A photo wrongly sent to Review costs you a few seconds. A photo wrongly deleted is
-gone.** So deleting requires two independent witnesses that agree: the vision model's
-judgement *and* a measurement that corroborates it. Neither can reject a frame alone.
+This tool has no code that moves, renames or removes a photo file, and
+`test_no_destructive_operations.py` fails the build if any is ever added. The only
+things it writes are sidecars, its own cache, and a CSV report.
+
+**Delete is a keyword, not an action.** A rejected frame gets tagged
+`PhotoCuller:Delete` and is otherwise left exactly where it was. Acting on that is your
+job, in your own catalogue, where it can be undone.
+
+## The rule that shapes the verdicts
+
+**A photo wrongly sent to Review costs you a few seconds. A photo wrongly marked for
+deletion wastes your attention and erodes your trust in the tool.** So the Delete verdict
+requires two independent witnesses that agree: the vision model's judgement *and* a
+measurement that corroborates it. Neither can reject a frame alone.
 
 The practical consequence is that Review is often the largest pile. That is the tool
 working, not failing. It is a triage assistant, not a decision maker.
@@ -68,7 +79,6 @@ Results also go to a timestamped CSV in `<folder>/cull_runs/`.
 | `--no-tags` | Skip descriptions and keywords. Roughly twice as fast. |
 | `--no-grouping` | Do not group bursts or demote near-duplicates. |
 | `--override` | Replace existing keywords and descriptions. Ratings are always kept. |
-| `--move-deletes` | Move confident deletions into `_culled_deletes/`. Moves, never erases. |
 | `--cache-dir` | Reuse analysis for unchanged files across runs. |
 | `--workers` | Parallel requests to Ollama (see [Speed](#speed)). |
 | `--detail` | Print every photo as it is decided. |
@@ -206,6 +216,9 @@ detail; a low score might just be fog. So it can veto a deletion but never cause
 Two levels, both worth running after changing anything:
 
 ```bash
+# Proof that no code path can move, rename or remove a photograph.
+python test_no_destructive_operations.py
+
 # Decision-logic invariants. No model needed, runs instantly.
 python test_decision.py
 
@@ -235,6 +248,7 @@ cli.py            Shared command line
 culler_on1.py     Entry point, ON1 sidecars
 culler_universal.py  Entry point, XMP sidecars
 test_decision.py  Invariants for the two-witness rule
+test_no_destructive_operations.py  Proof no code path can touch a photo file
 eval_harness.py   End-to-end check against generated ground truth
 ```
 
@@ -248,7 +262,8 @@ catalogue. Restart ON1 afterwards to see the keywords.
 keywords and descriptions are preserved unless you pass `--override`.
 
 Either way, search for `PhotoCuller:Review` to work through the uncertain frames, or
-`PhotoCuller:Delete` to check the rejects before removing anything.
+`PhotoCuller:Delete` to see the rejects. Those files are still sitting exactly where
+they were — removing any of them is a decision you make in your own catalogue.
 
 ## Licence
 

@@ -3,6 +3,11 @@
 The two front ends previously duplicated about ninety percent of their logic, so a fix
 applied to one silently missed the other. They now differ only in which sidecar they
 write.
+
+This tool never moves, renames or removes a photograph. The only files it writes are
+sidecars, its own cache, and a CSV report. "Delete" is a verdict recorded as a keyword;
+what happens to the file afterwards is a decision the photographer makes in their own
+catalogue, where it can be undone.
 """
 
 from datetime import datetime
@@ -52,7 +57,7 @@ def common_options(func):
     options = [
         click.argument("folder", type=click.Path(exists=True, file_okay=False)),
         click.option("--fast", is_flag=True,
-                     help="Measurement-only triage, no model. Sorts into Keep/Review; never deletes."),
+                     help="Measurement-only triage, no model. Only ever reaches Keep or Review."),
         click.option("--model", "ollama_model", default=None,
                      help="Ollama vision model. Default: auto-detect the best installed one."),
         click.option("--host", default=None, help="Ollama host URL."),
@@ -70,9 +75,7 @@ def common_options(func):
         click.option("--override", is_flag=True,
                      help="Replace existing keywords and descriptions. Ratings are kept."),
         click.option("--dry-run", is_flag=True,
-                     help="Analyse and report without writing sidecars or moving anything."),
-        click.option("--move-deletes", is_flag=True,
-                     help="Move confident deletions into _culled_deletes/ (files are moved, not erased)."),
+                     help="Analyse and report without writing any sidecars."),
         click.option("--csv-file", type=click.Path(), default=None,
                      help="Write results here instead of a timestamped file in cull_runs/."),
         click.option("--detail", is_flag=True, help="Print every photo as it is decided."),
@@ -141,40 +144,10 @@ def write_csv(path: Path, results: Sequence[CullResult]):
             })
 
 
-def move_deletions(results: Sequence[CullResult], folder: Path, min_confidence: float = 0.8) -> int:
-    """Move confident deletions aside. Nothing is ever erased."""
-    candidates = [
-        r for r in results if r.decision == DELETE and r.confidence >= min_confidence
-    ]
-    if not candidates:
-        return 0
-
-    trash = folder / "_culled_deletes"
-    trash.mkdir(exist_ok=True)
-
-    moved = 0
-    for result in candidates:
-        try:
-            destination = trash / result.filepath.name
-            if destination.exists():
-                print(f"  skipping {result.filepath.name}: already in _culled_deletes")
-                continue
-            result.filepath.rename(destination)
-
-            # Keep sidecars with their photo, otherwise the catalogue is left with
-            # orphans pointing at a file that moved.
-            for companion in (
-                result.filepath.with_suffix(".on1"),
-                result.filepath.with_suffix(".xmp"),
-                Path(str(result.filepath) + ".xmp"),
-            ):
-                if companion.exists():
-                    companion.rename(trash / companion.name)
-            moved += 1
-        except OSError as e:
-            print(f"  could not move {result.filepath.name}: {e}")
-
-    return moved
+# There is deliberately no function here that moves, renames or removes a photograph.
+# "Delete" is a keyword this tool writes into a sidecar and nothing more; acting on it
+# is the photographer's job, done in their own catalogue where it can be undone.
+# test_no_destructive_operations.py fails the build if that ever stops being true.
 
 
 def summarise(results: Sequence[CullResult], culler: BatchCuller, elapsed: float):
@@ -200,7 +173,7 @@ def summarise(results: Sequence[CullResult], culler: BatchCuller, elapsed: float
 
     deletions = [r for r in results if r.decision == DELETE]
     if deletions:
-        print(f"\n  Deletion candidates ({len(deletions)}) - check these before removing anything:")
+        print(f"\n  Rejects ({len(deletions)}) - tagged PhotoCuller:Delete, files left untouched:")
         for result in sorted(deletions, key=lambda r: -r.confidence)[:10]:
             print(f"    {result.filepath.name}  {', '.join(result.issues) or 'no reason given'}")
         if len(deletions) > 10:
@@ -311,10 +284,6 @@ def run_cull(sidecar_style: Optional[str], **kwargs) -> int:
             print("    (ON1 must have created a .on1 file before the culler can update it)")
     if not dry_run:
         print(f"  results: {csv_path}")
-
-    if kwargs.get("move_deletes") and not dry_run:
-        moved = move_deletions(results, folder)
-        print(f"  moved {moved} confident deletions into {folder / '_culled_deletes'}")
 
     print(f"\n  Search your photo app for PhotoCuller:Review to work through the "
           f"{sum(1 for r in results if r.decision == REVIEW)} uncertain frames.")

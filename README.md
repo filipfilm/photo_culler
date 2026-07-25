@@ -62,7 +62,7 @@ Results also go to a timestamped CSV in `<folder>/cull_runs/`.
 
 | Flag | Effect |
 |---|---|
-| `--fast` | Measurement only, no model. Sorts Keep/Review, never deletes. ~0.2 s/photo. |
+| `--fast` | Measurement only, no model. Sorts Keep/Review, never deletes. ~0.05 s/photo. |
 | `--dry-run` | Analyse and report; write nothing. |
 | `--model` | Pick an Ollama model. Default: auto-detect the best installed one. |
 | `--no-tags` | Skip descriptions and keywords. Roughly twice as fast. |
@@ -109,16 +109,20 @@ approved.
 
 | Model | Size | False deletes | Caught | Speed |
 |---|---|---|---|---|
-| `qwen3-vl:4b-instruct` | 3.3 GB | 0/8 | 3/24 | 3.9 s |
-| `qwen3-vl:8b-instruct` | 6.1 GB | 0/8 | 12/24 | 6.3 s |
-| **`qwen3-vl:30b-a3b-instruct`** | 20 GB | **0/8** | **24/24** | **5.0 s** |
-| `gemma4:31b` | 19 GB | 1/8 | 17/24 | 14.5 s |
+| `qwen3-vl:4b-instruct` | 3.3 GB | 0/8 | 3/24 | 3.8 s |
+| `qwen3-vl:8b-instruct` | 6.1 GB | 0/8 | 12/24 | 6.6 s |
+| **`qwen3-vl:30b-a3b-instruct`** | 20 GB | **0/8** | **23/24** | **5.5 s** |
+| `gemma4:31b` | 19 GB | 1/8 | 17/24 | 14.0 s |
 
-**Recommendation for a 64 GB M4 Max: `qwen3-vl:30b-a3b-instruct`.** It was perfect on
-both criteria and three times faster than `gemma4:31b`. It is a mixture-of-experts
-model with roughly 3B parameters active per token, so it runs at about the speed of an
-8B model while judging like a much larger one, and 20 GB of weights sits comfortably in
-64 GB of unified memory.
+Numbers are from a second run after the context-size fix; the first run agreed within
+noise, except that the 30B model caught 24/24 rather than 23/24. Treat single-frame
+differences as run-to-run variance, not signal.
+
+**Recommendation for a 64 GB M4 Max: `qwen3-vl:30b-a3b-instruct`.** It never discarded a
+good photograph, caught essentially everything, and ran two and a half times faster than
+`gemma4:31b`. It is a mixture-of-experts model with roughly 3B parameters active per
+token, so it runs at about the speed of an 8B model while judging like a much larger
+one, and 20 GB of weights sits comfortably in 64 GB of unified memory.
 
 Use `qwen3-vl:8b-instruct` if you want to get through a large folder faster and are
 willing to work through a bigger Review pile. Do not use the 4B model for culling: it
@@ -135,23 +139,29 @@ Two findings worth knowing:
 
 ## Speed
 
-Roughly 5–7 s per photo with tagging on, half that with `--no-tags`, and about 0.2 s in
-`--fast` mode.
+Measured on the M4 Max: about 5.5 s per photo for triage with
+`qwen3-vl:30b-a3b-instruct`, 6.6 s with the 8B, 14 s with `gemma4:31b`. Tagging is a
+second pass over frames worth keeping, so a full run with descriptions and keywords
+lands near twice the triage figure; `--no-tags` skips it. `--fast` mode is around
+0.05 s per photo.
 
-**Do not reach for `--workers` first.** It defaults to 1 for the model path on purpose.
-Ollama gives every parallel slot its own context, so asking `qwen3-vl:30b-a3b-instruct`
-for four of them took it from 20 GB of weights to 46 GB resident on a 64 GB machine,
-which pushed the system into swap and left the GPU idling at under 1% while it waited on
-the disk. One request already keeps Apple Silicon busy. If you do want to try it, give
-Ollama matching permission and watch memory:
+**Do not reach for `--workers` first.** It defaults to 1 for the model path on purpose:
+one request already keeps Apple Silicon busy, and every extra Ollama slot wants its own
+context. If you do try it, give Ollama matching permission and watch memory:
 
 ```bash
 OLLAMA_NUM_PARALLEL=2 ollama serve
 python culler_universal.py ~/Photos/Shoot --workers 2
 ```
 
-`--fast` mode is different — it loads no model and is plain CPU work, so it defaults to
-8 workers and chews through RAW files at about 0.2 s each.
+The tool asks Ollama for an 8192-token context rather than letting it size from the
+model's 262,144-token maximum. That is a memory setting, not a speed one — per-photo
+time is the same either way — but it holds `qwen3-vl:30b-a3b-instruct` at 19.8 GB
+instead of 46 GB. At 46 GB a 64 GB machine has nothing spare, and adding workers tipped
+it into swap, where inference ran at disk speed with the GPU idling under 1%.
+
+`--fast` mode loads no model at all — it is plain CPU work, defaults to 8 workers, and
+got through 24 Nikon RAW files in 1.1 seconds.
 
 Use `--cache-dir ~/.cache/photo_culler` so re-running a folder only analyses what
 changed.

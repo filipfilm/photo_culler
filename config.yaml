@@ -18,9 +18,9 @@ model:
   # failing on unusually large images.
   #
   # Ollama otherwise sizes the context from the model's maximum, which for qwen3-vl is
-  # 262,144 tokens, and reserves memory accordingly: a 20GB model became 46GB resident
-  # and the machine swapped. One photograph plus its detail crop measures around 2,100
-  # tokens, so this is already generous, and it keeps the same model at 19.8GB.
+  # 262,144 tokens, and reserves memory accordingly: a 20GB model became 46GB resident.
+  # One photograph plus its detail crop measures around 2,100 tokens, so this is already
+  # generous, and it keeps the same model at 19.8GB. Same speed, far more headroom.
   context_tokens: 8192
 
 processing:

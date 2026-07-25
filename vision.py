@@ -59,14 +59,16 @@ DETAIL_CROP = 768
 
 # Context window requested from Ollama.
 #
-# This matters far more than it looks. Left to itself Ollama sizes the context from the
-# model's maximum -- 262,144 tokens for qwen3-vl -- and reserves memory to match, which
-# took a 20GB model to 46GB resident and pushed a 64GB machine into swap. Inference then
-# runs at disk speed: measured 5s per photograph, with the GPU idling at 1%.
+# Left to itself Ollama sizes the context from the model's maximum -- 262,144 tokens for
+# qwen3-vl -- and reserves memory to match. That took a 20GB model to 46GB resident.
+# One photograph plus its detail crop and the prompt measures 2,119 tokens, so asking
+# for 8192 leaves generous headroom and holds the same model at 19.8GB.
 #
-# One photograph plus its detail crop and the prompt measured 2,119 tokens. Asking for
-# 8192 leaves generous headroom, holds the same model at 19.8GB, and made the identical
-# request take 0.6s.
+# This buys memory, not speed: measured per-photograph time was the same either way. It
+# matters because 46GB leaves nothing spare on a 64GB machine, and adding workers (each
+# slot wants its own context) tipped it into swap, where inference ran at disk speed
+# with the GPU idling at 1%. At 8192 that failure mode is off the table, and the tool
+# fits on a 32GB machine.
 CONTEXT_TOKENS = 8192
 
 TRIAGE_SCHEMA = {

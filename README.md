@@ -76,6 +76,61 @@ next to it — every reject with a large thumbnail and its reasons, the Review p
 into burst alternates versus genuinely flagged frames, and the Keeps as a grid for
 spot-checking. Rebuild one any time with `python report.py <folder>`.
 
+## The ON1 plugin
+
+For the other half of the job — a handful of frames you want looked at *now*, with the
+proposed metadata in front of you before any of it reaches the catalogue.
+
+```bash
+python3 on1_plugin/install.py
+```
+
+That builds `~/Applications/PhotoCuller.app`. In ON1 Photo RAW, select photographs in
+Browse, right-click, **Send to › Send to Other Application…**, and pick it once; ON1
+remembers it as **Send to › PhotoCuller** from then on. It also works by dragging photos
+onto the app's Dock icon, or from Finder's **Open With**.
+
+A window opens listing the selection, each frame analysed as it finishes. For every
+photograph you get the verdict, the preview, and a tick box per field:
+
+| Field | Default |
+| --- | --- |
+| Culling keywords (`PhotoCuller:Keep`, confidence, issues) | on |
+| Descriptive keywords — editable | on |
+| Description — editable | on |
+| Full analysis block | on |
+| Star rating | **off** |
+
+Keywords and descriptions are editable text, ratings default to off for the same reason
+they are opt-in on the command line, and nothing is written until you press **Write
+metadata**. Untick a photograph and it is skipped entirely. You choose `.on1`, `.xmp` or
+both; whichever the folder already uses is pre-selected.
+
+**ON1 has no plugin API for this.** It hosts Photoshop-format pixel plugins and ships a
+Lightroom `.lrplugin`, neither of which can be handed a selection of originals and asked
+to write metadata. "Send to Other Application" is the one door, so the plugin is a small
+application bundle — an AppleScript droplet that catches the open-documents event and
+hands the paths to Python. Two consequences worth knowing:
+
+- **Send To renders a copy first**, usually a TIFF beside the RAW. Metadata on that copy
+  would be useless, so a render is traced back to its original by filename and the
+  sidecar is written for the original. The window says `sent as DSC_0001.tif, writing to
+  the original` when this happens.
+- **macOS keeps unsigned applications out of `~/Documents`, `~/Desktop` and
+  `~/Downloads`.** If the project lives in one of those, the installer also leaves a
+  readable copy in `~/Library/Application Support/PhotoCuller/` and the bundle runs that
+  — so re-run the installer after changing the code. Granting PhotoCuller.app Full Disk
+  Access in System Settings › Privacy & Security makes it run your working tree directly
+  instead. Photographs themselves are unaffected: they arrive as arguments from an
+  application you chose, which is exactly the case macOS permits.
+
+If Ollama is not running the window offers to fall back to measurement-only fast mode.
+Anything that goes wrong before the window appears is logged to
+`~/Library/Logs/PhotoCuller.log`.
+
+For a whole shoot, use the command line instead — it caches, resumes, and writes a CSV
+and a contact sheet.
+
 ## Long runs are safe to interrupt
 
 Analysis is cached per photograph (default `~/.cache/photo_culler`), so a crash, a
@@ -243,6 +298,10 @@ python test_decision.py
 # Which formats are accepted, and that the two extension lists agree.
 python test_formats.py
 
+# The plugin: which file a Send To actually lands on, and that an unticked
+# field never reaches the sidecar.
+python -m pytest test_on1_plugin.py
+
 # End to end against your own photographs. Builds a ground-truth set by taking
 # real frames and also defocusing / under- / overexposing them, then checks that
 # no original is ever sent to Delete.
@@ -269,9 +328,16 @@ config.py         Reads config.yaml
 cli.py            Shared command line
 culler_on1.py     Entry point, ON1 sidecars
 culler_universal.py  Entry point, XMP sidecars
+
+on1_plugin/install.py  Builds PhotoCuller.app, the bundle ON1 sends photos to
+on1_plugin/app.py      Plugin entry point: analyse a selection, show the popup
+on1_plugin/review.py   The metadata popup
+on1_plugin/resolve.py  Traces ON1's rendered copies back to the originals
+
 test_decision.py  Invariants for the two-witness rule
 test_formats.py   Accepted formats, and the two extension lists agreeing
 test_no_destructive_operations.py  Proof no code path can touch a photo file
+test_on1_plugin.py  Which file gets culled, and which metadata reaches disk
 eval_harness.py   End-to-end check against generated ground truth
 ```
 

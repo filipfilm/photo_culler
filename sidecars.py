@@ -12,6 +12,7 @@ Both preserve what the photographer put there. Ratings, user keywords and existi
 descriptions survive unless --override is passed, and even then ratings are kept.
 """
 
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -49,6 +50,42 @@ CULLER_PREFIXES = (
 # regenerates its keywords from, so they do not immediately come back.
 
 
+@dataclass
+class WriteOptions:
+    """Which parts of a result actually reach the sidecar.
+
+    The command line writes everything, so all the flags default to on and the CLI never
+    passes this object. It exists for the ON1 plugin, where the photographer sees the
+    proposed metadata first and ticks the parts they want; without field-level control
+    the popup's checkboxes would be decoration.
+
+    rating is a star value rather than a flag because the plugin lets you change it
+    before writing. None means "do not touch the rating", which stays the default
+    everywhere -- a star rating is the photographer's own shorthand.
+    """
+
+    keywords: bool = True  # the model's descriptive keywords
+    culler_keywords: bool = True  # PhotoCuller:Keep, CullerConfidence:0.82, ...
+    description: bool = True
+    analysis: bool = True  # the full metrics block, and the readable summary line
+    rating: Optional[int] = None
+
+    # The force flags exist for the popup. On the command line, silently keeping what
+    # the photographer already wrote is the safe default. In a review window they have
+    # just looked at the proposed value and ticked it, so quietly discarding it because
+    # the slot was occupied would look like the button did nothing.
+    force_rating: bool = False
+    force_description: bool = False
+
+
+def _options_for(
+    result: CullResult, options: Optional[WriteOptions], suggest_ratings: bool
+) -> WriteOptions:
+    if options is not None:
+        return options
+    return WriteOptions(rating=suggested_rating(result.metrics) if suggest_ratings else None)
+
+
 def culler_keywords(result: CullResult) -> List[str]:
     """The keywords the culler owns, which it also removes before each rewrite."""
     issues = ", ".join(result.issues) if result.issues else "none"
@@ -70,6 +107,24 @@ def culler_keywords(result: CullResult) -> List[str]:
 
 def _is_culler_keyword(keyword: str) -> bool:
     return any(keyword.startswith(prefix) for prefix in CULLER_PREFIXES)
+
+
+def _deduplicated(keywords: List[str]) -> List[str]:
+    """Keep the first occurrence of each keyword, in order.
+
+    Preserve mode keeps the photographer's keywords and then appends the model's, so a
+    second run on the same photo used to write "bridge" twice -- and a third, three
+    times. Matching is case-insensitive because photo apps treat Bridge and bridge as
+    one keyword anyway.
+    """
+    seen = set()
+    unique = []
+    for keyword in keywords:
+        key = keyword.strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(keyword)
+    return unique
 
 
 def analysis_block(result: CullResult) -> Dict[str, str]:
@@ -97,9 +152,13 @@ def analysis_block(result: CullResult) -> Dict[str, str]:
 
 
 def write_on1_sidecar(
-    result: CullResult, override: bool = False, suggest_ratings: bool = False
+    result: CullResult,
+    override: bool = False,
+    suggest_ratings: bool = False,
+    options: Optional[WriteOptions] = None,
 ) -> bool:
     """Update the .on1 sidecar beside a photo. Returns False when there is none."""
+    opts = _options_for(result, options, suggest_ratings)
     on1_file = result.filepath.with_suffix(".on1")
     if not on1_file.exists():
         return False
@@ -133,20 +192,28 @@ def write_on1_sidecar(
     else:
         keywords = [kw for kw in metadata.get("Keywords", []) if not _is_culler_keyword(kw)]
 
-    if result.metrics.keywords:
+    if opts.keywords and result.metrics.keywords:
         keywords.extend(result.metrics.keywords[:8])
-    keywords.extend(culler_keywords(result))
-    metadata["Keywords"] = keywords
+    if opts.culler_keywords:
+        keywords.extend(culler_keywords(result))
+
+    # With both keyword sources switched off there is nothing to add, so the field is
+    # left exactly as ON1 wrote it rather than being rewritten with the stripped copy.
+    if opts.keywords or opts.culler_keywords or override:
+        metadata["Keywords"] = _deduplicated(keywords)
 
     description = result.metrics.description
-    if description and (override or not metadata.get("Description")):
+    if opts.description and description and (
+        override or opts.force_description or not metadata.get("Description")
+    ):
         metadata["Description"] = description
 
-    # Same rule as the XMP writer: only fill an empty slot, and only when asked.
-    if suggest_ratings and not metadata.get("Rating"):
-        metadata["Rating"] = suggested_rating(result.metrics)
+    # Same rule as the XMP writer: only fill an empty slot, unless told otherwise.
+    if opts.rating is not None and (opts.force_rating or not metadata.get("Rating")):
+        metadata["Rating"] = opts.rating
 
-    metadata["PhotoCullerAnalysis"] = analysis_block(result)
+    if opts.analysis:
+        metadata["PhotoCullerAnalysis"] = analysis_block(result)
     metadata["MetadataDate"] = datetime.now().strftime("%a %b %d %H:%M:%S %Y")
     metadata.setdefault("MetadataDateOffset", 0)
 
@@ -177,8 +244,7 @@ XMP_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
       xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"
       xmlns:photoculler="{namespace}"
       xmp:ModifyDate="{modify_date}"
-      xmp:CreatorTool="PhotoCuller"{rating_attr}
-{analysis_attrs}>
+      xmp:CreatorTool="PhotoCuller"{rating_attr}{analysis_attrs}>
       <dc:subject>
         <rdf:Bag>
 {keywords_xml}
@@ -194,8 +260,7 @@ XMP_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
           <rdf:li xml:lang="x-default">{description}</rdf:li>
         </rdf:Alt>
       </dc:description>
-      <photoshop:Instructions>{instructions}</photoshop:Instructions>
-    </rdf:Description>
+{instructions_xml}    </rdf:Description>
   </rdf:RDF>
 </x:xmpmeta>
 """
@@ -278,23 +343,30 @@ def xmp_path_for(photo: Path) -> Path:
 
 
 def write_xmp_sidecar(
-    result: CullResult, override: bool = False, suggest_ratings: bool = False
+    result: CullResult,
+    override: bool = False,
+    suggest_ratings: bool = False,
+    options: Optional[WriteOptions] = None,
 ) -> bool:
     """Write a .xmp sidecar next to the photo, preserving existing user metadata."""
+    opts = _options_for(result, options, suggest_ratings)
     xmp_file = xmp_path_for(result.filepath)
     existing = read_existing_xmp(xmp_file)
 
     keywords = [] if override else list(existing["keywords"])
-    if result.metrics.keywords:
+    if opts.keywords and result.metrics.keywords:
         keywords.extend(result.metrics.keywords[:8])
-    keywords.extend(culler_keywords(result))
+    if opts.culler_keywords:
+        keywords.extend(culler_keywords(result))
 
-    if result.metrics.description:
+    if opts.description and result.metrics.description:
         description = result.metrics.description
     elif not override and existing["description"]:
         description = existing["description"]
-    else:
+    elif opts.description:
         description = f"PhotoCuller: {result.decision}"
+    else:
+        description = ""
 
     # A star rating is the photographer's own shorthand, so the culler does not get to
     # invent one unless asked. Its opinion is always available as the
@@ -303,22 +375,32 @@ def write_xmp_sidecar(
     existing_rating = (existing["rating"] or "").strip()
     has_real_rating = bool(existing_rating) and existing_rating != "0"
 
-    if has_real_rating:
+    if has_real_rating and not opts.force_rating:
         rating_attr = f'\n      xmp:Rating="{escape(existing_rating)}"'
-    elif suggest_ratings:
-        rating_attr = f'\n      xmp:Rating="{suggested_rating(result.metrics)}"'
+    elif opts.rating is not None:
+        rating_attr = f'\n      xmp:Rating="{opts.rating}"'
+    elif has_real_rating:
+        rating_attr = f'\n      xmp:Rating="{escape(existing_rating)}"'
     else:
         rating_attr = ""
 
     # Descriptions and keywords are free text straight from a model, so every value has
     # to be escaped -- an unescaped ampersand produces a sidecar no photo app will open.
     keywords_xml = "\n".join(
-        f"          <rdf:li>{escape(str(kw))}</rdf:li>" for kw in keywords
+        f"          <rdf:li>{escape(str(kw))}</rdf:li>" for kw in _deduplicated(keywords)
     )
-    analysis_attrs = "\n".join(
-        f'      photoculler:{_camel(key)}="{escape(str(value))}"'
-        for key, value in analysis_block(result).items()
-    )
+    analysis_attrs = ""
+    instructions_xml = ""
+    if opts.analysis:
+        analysis_attrs = "\n" + "\n".join(
+            f'      photoculler:{_camel(key)}="{escape(str(value))}"'
+            for key, value in analysis_block(result).items()
+        )
+        instructions_xml = (
+            f"      <photoshop:Instructions>{escape(analysis_summary(result))}"
+            "</photoshop:Instructions>\n"
+        )
+
     content = XMP_TEMPLATE.format(
         namespace=XMP_NAMESPACE,
         modify_date=datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
@@ -327,7 +409,7 @@ def write_xmp_sidecar(
         keywords_xml=keywords_xml,
         title=escape(result.filepath.stem),
         description=escape(description),
-        instructions=escape(analysis_summary(result)),
+        instructions_xml=instructions_xml,
     )
 
     try:
@@ -339,10 +421,14 @@ def write_xmp_sidecar(
 
 
 def write_sidecar(
-    result: CullResult, style: str, override: bool = False, suggest_ratings: bool = False
+    result: CullResult,
+    style: str,
+    override: bool = False,
+    suggest_ratings: bool = False,
+    options: Optional[WriteOptions] = None,
 ) -> bool:
     if style == "on1":
-        return write_on1_sidecar(result, override, suggest_ratings)
+        return write_on1_sidecar(result, override, suggest_ratings, options)
     if style == "xmp":
-        return write_xmp_sidecar(result, override, suggest_ratings)
+        return write_xmp_sidecar(result, override, suggest_ratings, options)
     raise ValueError(f"Unknown sidecar style: {style}")

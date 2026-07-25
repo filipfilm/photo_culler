@@ -5,7 +5,7 @@ All-in-one photo culler for ON1 Photo RAW - analyze, ON1 metadata, CSV, results
 import click
 from pathlib import Path
 from batch import BatchCuller
-from models import ProcessingMode
+# Removed ProcessingMode as it's no longer needed
 import json
 import logging
 import csv
@@ -508,17 +508,17 @@ def print_result(filepath, decision, confidence, issues, metrics):
 
 @click.command()
 @click.argument('folder', type=click.Path(exists=True))
-@click.option('--fast', is_flag=True, help='Use fast CV mode (no ON1 metadata)')
+@click.option('--fast', is_flag=True, help='Use fast local mode (no ON1 metadata)')
 @click.option('--cache-dir', type=click.Path(), help='Directory for thumbnail and results cache')
 @click.option('--csv-file', default='photo_culler_results.csv', help='CSV file to append results to')
 @click.option('--move-deletes', is_flag=True, help='Move files marked for deletion')
-@click.option('--use-ollama', is_flag=True, help='Use Ollama vision model instead of CLIP')
-@click.option('--ollama-model', default='llava:13b', help='Ollama model to use')
+@click.option('--use-ollama/--no-ollama', default=True, help='Use Ollama vision model for accurate analysis')
+@click.option('--ollama-model', default='gemma4:e4b', help='Ollama model to use')
 @click.option('--verbose', is_flag=True, help='Show processing details')
 @click.option('--detail', is_flag=True, help='Show individual file results during processing')
 @click.option('--extensions', default='nef,cr2,arw,jpg,jpeg', help='File extensions to process')
 @click.option('--override', is_flag=True, help='Override ALL existing keywords and descriptions (preserves ratings only)')
-@click.option('--learning', is_flag=True, help='Enable adaptive learning mode')
+@click.option('--learning', is_flag=True, help='Show session summary and save session stats')
 @click.option('--chunk-size', default=1, help='Number of images per worker chunk (for load balancing)')
 @click.option('--concurrent', default=1, help='Number of concurrent Ollama instances (requires multiple Ollama servers on different ports)')
 def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama_model, verbose, detail, extensions, override, learning, chunk_size, concurrent):
@@ -545,8 +545,8 @@ def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama
     
     logger = setup_logging(verbose)
     
-    # Determine mode
-    mode = ProcessingMode.FAST if fast else ProcessingMode.ACCURATE
+    # Determine mode - simplified to just use vision model
+    mode = "fast" if fast else "accurate"
     
     folder = Path(folder)
     cache = Path(cache_dir) if cache_dir else None
@@ -556,7 +556,7 @@ def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama
     ext_list = ['.' + ext.strip().lstrip('.') for ext in extensions.split(',')]
     
     print(f"📁 Folder: {folder}")
-    print(f"🔧 Mode: {mode.value}" + (f" (Ollama: {ollama_model})" if use_ollama and not fast else ""))
+    print(f"🔧 Mode: {mode}" + (f" (Ollama: {ollama_model})" if use_ollama and not fast else ""))
     print(f"📊 CSV: {csv_path}")
     print(f"📝 ON1 Metadata: {'Yes' if not fast else 'No (fast mode)'}")
     print(f"📎 Extensions: {', '.join(ext_list)}")
@@ -599,37 +599,30 @@ def cull_on1(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, ollama
         # Single threaded processing (original)
         results, on1_updated = process_sequential(files, culler, detail, fast, override, csv_path)
     
-    # Save session data (adaptive learning, caches, etc.)
+    # Save session statistics if requested.
     try:
-        culler.save_session()
-        
-        # Show adaptive learning insights if available
-        session_summary = culler.get_session_summary()
-        if session_summary and session_summary.get('total_processed', 0) > 0:
-            print("\n📚 ADAPTIVE LEARNING SUMMARY")
-            print("=" * 60)
-            
-            # Show detected style preferences
-            detected_style = session_summary.get('detected_style', {})
-            if detected_style.get('uses_shallow_dof'):
-                print("📸 Detected: Preference for shallow depth of field photography")
-            if detected_style.get('prefers_dark_mood'):
-                print("🌙 Detected: Preference for dark/moody exposure style")
-            if detected_style.get('common_subjects'):
-                subjects = ', '.join(detected_style['common_subjects'])
-                print(f"🎯 Common subjects: {subjects}")
-            
-            # Show average quality scores
-            for metric in ['blur', 'exposure', 'composition']:
-                avg_key = f'avg_{metric}'
-                if avg_key in session_summary:
-                    score = session_summary[avg_key]
-                    print(f"📈 Average {metric} score: {score:.2f}")
-            
-            print("📊 Learning data saved - future sessions will be more accurate")
+        if learning:
+            culler.save_session()
+            session_summary = culler.get_session_summary()
+            if session_summary and session_summary.get('total_processed', 0) > 0:
+                print("\n📚 SESSION SUMMARY")
+                print("=" * 60)
+
+                detected_style = session_summary.get('detected_style', {})
+                if detected_style.get('common_subjects'):
+                    subjects = ', '.join(detected_style['common_subjects'])
+                    print(f"🎯 Common subjects: {subjects}")
+
+                for metric in ['blur', 'exposure', 'composition']:
+                    avg_key = f'avg_{metric}'
+                    if avg_key in session_summary:
+                        score = session_summary[avg_key]
+                        print(f"📈 Average {metric} score: {score:.2f}")
+
+                print("📊 Session stats saved")
             
     except Exception as e:
-        print(f"⚠️  Warning: Failed to save session data: {e}")
+        print(f"⚠️  Warning: Failed to save session stats: {e}")
     
     # Summary
     print("=" * 60)

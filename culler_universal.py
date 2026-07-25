@@ -6,7 +6,7 @@ Creates standard XMP sidecar files that all apps can read
 import click
 from pathlib import Path
 from batch import BatchCuller
-from models import ProcessingMode
+# Removed ProcessingMode as it's no longer needed
 import json
 import logging
 import csv
@@ -278,12 +278,12 @@ def print_result(filepath, decision, confidence, issues, metrics):
 
 @click.command()
 @click.argument('folder', type=click.Path(exists=True))
-@click.option('--fast', is_flag=True, help='Use fast CV mode (no metadata)')
+@click.option('--fast', is_flag=True, help='Use fast local mode (no metadata)')
 @click.option('--cache-dir', type=click.Path(), help='Directory for thumbnail and results cache')
 @click.option('--csv-file', default='photo_culler_results.csv', help='CSV file to append results to')
 @click.option('--move-deletes', is_flag=True, help='Move files marked for deletion')
-@click.option('--use-ollama', is_flag=True, help='Use Ollama vision model instead of CLIP')
-@click.option('--ollama-model', default='llava:13b', help='Ollama model to use')
+@click.option('--use-ollama/--no-ollama', default=True, help='Use Ollama vision model for accurate analysis')
+@click.option('--ollama-model', default='gemma4:e4b', help='Ollama model to use')
 @click.option('--verbose', is_flag=True, help='Show processing details')
 @click.option('--detail', is_flag=True, help='Show individual file results during processing')
 @click.option('--extensions', default='nef,cr2,arw,jpg,jpeg', help='File extensions to process')
@@ -312,8 +312,8 @@ def cull_universal(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, 
     
     logger = setup_logging(verbose)
     
-    # Determine mode
-    mode = ProcessingMode.FAST if fast else ProcessingMode.ACCURATE
+    # Determine mode - simplified to just use vision model
+    mode = "fast" if fast else "accurate"
     
     folder = Path(folder)
     cache = Path(cache_dir) if cache_dir else None
@@ -323,7 +323,7 @@ def cull_universal(folder, fast, cache_dir, csv_file, move_deletes, use_ollama, 
     ext_list = ['.' + ext.strip().lstrip('.') for ext in extensions.split(',')]
     
     print(f"📁 Folder: {folder}")
-    print(f"🔧 Mode: {mode.value}" + (f" (Ollama: {ollama_model})" if use_ollama and not fast else ""))
+    print(f"🔧 Mode: {mode}" + (f" (Ollama: {ollama_model})" if use_ollama and not fast else ""))
     print(f"📊 CSV: {csv_path}")
     print(f"📝 XMP Metadata: {'Yes (universal)' if not fast else 'No (fast mode)'}")
     print(f"📎 Extensions: {', '.join(ext_list)}")

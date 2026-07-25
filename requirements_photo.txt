@@ -1,29 +1,5 @@
-# Core dependencies
-rawpy>=0.18.0
-Pillow>=10.0.0
-numpy>=1.24.0
+-r requirements.txt
+
+# Optional extras for RAW support and stronger blur analysis
 opencv-python>=4.8.0
-click>=8.1.0
-requests>=2.25.0
-PyYAML>=6.0
-tqdm>=4.64.0
-
-# Enhanced feature dependencies
-imagehash>=4.3.0          # For duplicate/similar image detection
-piexif>=1.1.3             # For enhanced EXIF/IPTC metadata handling
-psutil>=5.9.0             # For system resource monitoring
-scipy>=1.10.0             # For advanced image analysis algorithms
-scikit-image>=0.20.0      # For advanced image processing and analysis
-
-# Vision model - Ollama recommended for Mac
-# Install Ollama from https://ollama.ai
-# Then run: ollama pull llava:13b
-
-# Alternative: CLIP (PyTorch-based, GPU recommended)
-# torch>=2.0.0
-# torchvision>=0.15.0
-# clip-by-openai
-
-# Optional: For advanced face detection (if not using built-in OpenCV cascades)
-# dlib>=19.24.0
-# face_recognition>=1.3.0
+rawpy>=0.18.0

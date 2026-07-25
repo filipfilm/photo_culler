@@ -1,41 +1,23 @@
-# AI-Powered Adaptive Photo Culler 📸
+# AI-Powered Photo Culler 📸
 
-An intelligent photo culling system that learns your photography style, provides creative keyword analysis, and makes sophisticated decisions about which photos to keep, review, or delete. Built with advanced AI vision models and computer vision techniques.
+An intelligent photo culling system for ON1 and standard XMP workflows. It combines Ollama-based image analysis with a lightweight local fast mode to sort photos into keep, review, or delete candidates.
 
 ## Features ✨
 
-- **Adaptive AI-Powered Analysis**:
-  - **Subject-Aware Focus Detection**: Evaluates main subject sharpness instead of entire image
-  - **Enhanced Focus Analysis**: Advanced CV-based subject detection and depth-of-field analysis  
-  - **Improved Ollama Integration**: Structured JSON output for reliable parsing
-  - **Photography Style Learning**: Automatically adapts to your shooting preferences
-  
-- **Creative AI Analysis**:
-  - **Intelligent Descriptions**: Natural storytelling descriptions that capture emotion and technical quality
-  - **Sophisticated Keywords**: Context-aware, searchable keywords like "golden hour portrait", "candid street moment"
-  - **Artistic Understanding**: Recognizes photographer intent, artistic choices, and creative techniques
-  
 - **Dual Processing Modes**:
-  - **Accurate Mode** (default): Enhanced Ollama llava:13b for 92-97% accuracy with creative analysis
-  - **Fast Mode**: Advanced CV with subject detection for quick triage (200ms/image vs 2s/image)
+  - **Accurate Mode** (default): Uses Ollama for richer descriptions, keywords, and confidence scoring
+  - **Fast Mode**: Runs locally without Ollama for quick triage on standard images
 
-- **Adaptive Learning System**:
-  - **Style Detection**: Learns your preferences for shallow DOF, exposure styles, common subjects
-  - **Threshold Adjustment**: Automatically adjusts decision thresholds based on your feedback
-  - **Session Insights**: Shows detected photography style and learning progress
-  - **Persistent Learning**: Saves preferences between sessions for improved accuracy
+- **Reliable Metadata Output**:
+  - **ON1 workflow**: Updates existing `.on1` sidecars when they already exist
+  - **Universal workflow**: Writes standard `.xmp` sidecars for Lightroom, Capture One, Bridge, and more
+  - **CSV export**: Appends every decision to a spreadsheet-friendly results file
 
 - **Smart Caching**: Never reprocess the same file/mode combination
-- **Batch Processing**: Vision model processes images efficiently with intelligent batching
+- **Batch Processing**: Processes folders with progress bars and cached re-runs
 - **Progress Tracking**: Real-time progress bars with ETA estimation using tqdm
-- **Graceful Fallback**: Auto-falls back through multiple analysis methods if components unavailable
-- **Enhanced RAW Support**: Proper thumbnail extraction for NEF, CR2, ARW, and other RAW formats
+- **Optional RAW Support**: Uses `rawpy` when installed for NEF, CR2, ARW, and other RAW formats
 - **Intelligent Decisions**: Categorizes photos as Keep, Delete, or Review with confidence scoring
-- **Advanced Metadata Integration**:
-  - ON1 Photo RAW support with .on1 sidecar files (Primary workflow)
-  - Universal XMP metadata for Lightroom, Capture One, Bridge and more
-  - AI-generated keywords and descriptions
-  - Technical analysis data storage
 - **Multiple Culling Tools**:
   - ON1-specific metadata integration with override options (Primary method)
   - Universal metadata support for all photo apps  
@@ -46,19 +28,25 @@ An intelligent photo culling system that learns your photography style, provides
 
 1. **Install Dependencies**:
 ```bash
+pip install -r requirements.txt
+```
+
+2. **Optional extras**:
+```bash
+# Add RAW support and stronger blur analysis
 pip install -r requirements_photo.txt
 ```
 
-2. **Setup Ollama** (Recommended for best results):
+3. **Setup Ollama** (recommended for accurate mode):
 ```bash
 # Install Ollama (macOS/Linux)
 curl -fsSL https://ollama.ai/install.sh | sh
 
-# Pull the vision model
-ollama pull llava:13b
+# Pull the default Gemma 4 vision model
+ollama pull gemma4:e4b
 ```
 
-3. **Setup Multi-Port Ollama** (Optional - for high-end systems):
+4. **Setup Multi-Port Ollama** (optional for `culler_on1.py --concurrent`):
 ```bash
 # Start multiple Ollama instances on different ports for parallel processing
 # Terminal 1 (primary instance)
@@ -74,28 +62,28 @@ OLLAMA_PORT=11436 ollama serve
 OLLAMA_PORT=11437 ollama serve
 ```
 
-4. **Basic Usage**:
+5. **Basic Usage**:
 ```bash
-# AI-powered culling with creative analysis (recommended)
-python culler_on1.py /path/to/photos --use-ollama --learning
+# AI-powered culling with ON1 metadata (recommended)
+python culler_on1.py /path/to/photos
 
 # Override existing metadata with fresh AI analysis
-python culler_on1.py /path/to/photos --use-ollama --override
+python culler_on1.py /path/to/photos --override
 
-# Fast mode for quick triage
+# Fast local mode for quick triage
 python culler_on1.py /path/to/photos --fast
 
 # Concurrent processing (requires multiple Ollama instances)
-python culler_on1.py /path/to/photos --use-ollama --concurrent 4 --chunk-size 2
+python culler_on1.py /path/to/photos --concurrent 4 --chunk-size 2
 
 # Universal metadata (works with Lightroom, Bridge, Capture One)
-python culler_universal.py /path/to/photos --use-ollama
+python culler_universal.py /path/to/photos
 ```
 
-4. **View Results**:
+6. **View Results**:
 ```bash
-# Save detailed JSON results (universal approach)
-python culler_universal.py /photos --output results.json
+# Save results to a custom CSV file
+python culler_universal.py /photos --csv-file results.csv
 
 # Move files marked for deletion (ON1 approach)
 python culler_on1.py /photos --move-deletes
@@ -104,7 +92,7 @@ python culler_on1.py /photos --move-deletes
 python culler_universal.py /photos --move-deletes
 ```
 
-4. **Advanced Usage with Metadata**:
+7. **Advanced Usage with Metadata**:
 ```bash
 # ON1 Photo RAW culling (preserves existing metadata)
 python culler_on1.py /photos --cache-dir ~/.cache
@@ -112,35 +100,27 @@ python culler_on1.py /photos --cache-dir ~/.cache
 # Universal metadata culling (works with Lightroom, Bridge, etc.)
 python culler_universal.py /photos --cache-dir ~/.cache
 
-# Use Ollama instead of CLIP for vision analysis (ON1)
-python culler_on1.py /photos --use-ollama
-
 # Use specific Ollama model (ON1)
-python culler_on1.py /photos --use-ollama --ollama-model llava:13b
-
-# Use Ollama instead of CLIP for vision analysis (universal)
-python culler_universal.py /photos --use-ollama
+python culler_on1.py /photos --ollama-model gemma4:26b
 
 # Use specific Ollama model (universal)
-python culler_universal.py /photos --use-ollama --ollama-model llava:13b
+python culler_universal.py /photos --ollama-model gemma4:26b
+
+# Run without Ollama in local fast mode
+python culler_universal.py /photos --fast --no-ollama
 ```
 
 ## Processing Modes 🔄
 
 ### Accurate Mode (Default)
-- Uses enhanced Ollama llava:13b vision model with subject-aware analysis
-- ~2 seconds per image (includes creative analysis)
-- 92-97% accurate on focus detection with subject recognition
-- Advanced focus analysis with computer vision subject detection
-- Creative AI analysis with intelligent descriptions and keywords
-- Best for comprehensive culling with artistic understanding
+- Uses Gemma 4 on Ollama by default, with structured JSON parsing
+- Produces richer descriptions and keywords for metadata workflows
+- Best for comprehensive culling when Ollama is available
 
 ### Fast Mode (`--fast`)
-- Traditional computer vision (OpenCV)
-- ~200ms per image
-- Good for catching obvious problems (very blurry, completely black/white)
-- Parallel processing with multiple workers
-- Best for initial triage of large collections
+- Runs locally without Ollama
+- Uses lightweight image-statistics analysis for blur, exposure, and composition estimates
+- Best for initial triage or systems without Ollama
 
 ## Concurrent Processing ⚡
 
@@ -159,14 +139,14 @@ OLLAMA_PORT=11437 ollama serve &
 
 ### Performance Optimization
 ```bash
-# Process with 4 concurrent instances (60-70% speed improvement)
-python culler_on1.py ~/Photos --use-ollama --concurrent 4 --chunk-size 1
+# Process with 4 concurrent instances
+python culler_on1.py ~/Photos --concurrent 4 --chunk-size 1
 
 # Fine-tune chunk size for your hardware
-python culler_on1.py ~/Photos --use-ollama --concurrent 2 --chunk-size 2
+python culler_on1.py ~/Photos --concurrent 2 --chunk-size 2
 
 # Memory-optimized for very large collections
-python culler_on1.py ~/Photos --use-ollama --concurrent 8 --chunk-size 1
+python culler_on1.py ~/Photos --concurrent 8 --chunk-size 1
 ```
 
 ### Concurrent Performance Benchmarks
@@ -187,13 +167,13 @@ python culler_on1.py ~/Photos --use-ollama --concurrent 8 --chunk-size 1
 python culler_on1.py ~/Photos/Wedding2024 --cache-dir ~/.cache
 
 # Quick triage of 10,000 photos with ON1 workflow
-python culler_on1.py ~/Photos/Massive_Collection --fast --workers 8
+python culler_on1.py ~/Photos/Massive_Collection --fast
 
 # Process only RAW files with ON1 workflow  
 python culler_on1.py ~/Photos --extensions nef,cr2,arw
 
-# Conservative CPU-only processing with ON1
-python culler_on1.py ~/Photos --force-cpu --verbose
+# Verbose accurate processing with ON1
+python culler_on1.py ~/Photos --verbose
 
 # Universal metadata approach (works with Lightroom, Bridge)
 python culler_universal.py ~/Photos/Wedding2024 --cache-dir ~/.cache
@@ -203,18 +183,16 @@ python culler_universal.py ~/Photos/Wedding2024 --cache-dir ~/.cache
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--fast` | False | Use fast CV mode |
-| `--cache-dir` | None | Cache directory for thumbnails/results |
-| `--workers` | 4 | Parallel workers (fast mode only) |
+| `--fast` | False | Use local fast analysis instead of Ollama |
+| `--cache-dir` | None | Cache directory for per-file analysis results |
 | `--chunk-size` | 1 | Images per worker chunk (for load balancing) |
 | `--concurrent` | 1 | Number of concurrent Ollama instances (requires multi-port setup) |
-| `--force-cpu` | False | Force CPU even if GPU available |
 | `--move-deletes` | False | Move deletion candidates to _culled_deletes/ |
 | `--extensions` | nef,cr2,arw,jpg,jpeg | File extensions to process |
-| `--output` | None | Save results to JSON file |
-| `--use-ollama` | False | Use Ollama vision model for creative analysis |
-| `--ollama-model` | `llava:13b` | Which Ollama model to use |
-| `--learning` | False | Enable adaptive learning system |
+| `--csv-file` | `photo_culler_results.csv` | CSV file to append results to |
+| `--use-ollama / --no-ollama` | Ollama on | Toggle Ollama for accurate mode |
+| `--ollama-model` | `gemma4:e4b` | Which Ollama model to use |
+| `--learning` | False | Keep session-summary output enabled in `culler_on1.py` |
 | `--override` | False | Override existing metadata with fresh AI analysis |
 
 ## Decision Logic 🤔
@@ -225,11 +203,10 @@ The system evaluates three key metrics:
 2. **Exposure Score** (0-1): Higher = better exposed  
 3. **Composition Score** (0-1): Higher = more interesting
 
-### Adaptive Decision Thresholds:
-- **Delete**: High confidence (>0.7) in critical issues, adjusted based on your style
-- **Review**: Medium confidence or multiple minor issues
-- **Keep**: Good overall quality or artistic merit detected
-- **Learning**: Automatically adjusts thresholds based on your feedback and detected photography style
+### Decision Thresholds:
+- **Delete**: High confidence in critical blur, poor exposure, or low overall quality
+- **Review**: Medium confidence or mixed signals
+- **Keep**: Good overall quality and strong sharpness
 
 ## Performance Benchmarks ⚡
 
@@ -238,7 +215,7 @@ The system evaluates three key metrics:
 | Fast | CPU | 200ms/img | 70% | Initial triage |
 | Accurate + Ollama | GPU | 2000ms/img | 97% | Creative analysis |
 | Accurate + Ollama | CPU | 3000ms/img | 95% | Comprehensive culling |
-| Accurate (CLIP) | GPU | 1000ms/img | 90% | Traditional analysis |
+| Accurate (Ollama) | GPU/CPU | ~2000ms/img | Depends on model | Rich metadata workflows |
 
 *Benchmarks on 24MP RAW files*
 
@@ -246,36 +223,31 @@ The system evaluates three key metrics:
 
 ```
 photo_culler/
-├── models.py                    # Data structures 
-├── analyzer.py                  # Hybrid CV + Vision analysis
-├── enhanced_focus_analyzer.py   # Advanced CV focus analysis with subject detection
-├── adaptive_decision_engine.py  # Learning system with style detection
-├── extractor.py                 # RAW thumbnail extraction with rawpy
-├── decision.py                  # Base culling decision logic
-├── batch.py                     # Batch processing with adaptive learning
-├── ollama_vision.py             # Enhanced Ollama with creative analysis
-├── subject_detector.py          # Computer vision subject detection
-├── config_loader.py             # Configuration management
-├── culler_on1.py               # ON1 Photo RAW culling with AI
-├── culler_universal.py         # Universal metadata culling
-├── requirements_photo.txt       # Python dependencies
-├── config.yaml                  # System configuration
-└── test_on1_xmp.py             # System tests
+├── models.py               # Core result dataclasses
+├── extractor.py            # Standard image and optional RAW extraction
+├── blur_detector.py        # Optional OpenCV-based blur scoring
+├── ollama_vision.py        # Ollama-powered accurate analyzer
+├── batch.py                # Shared batching, caching, and decision logic
+├── culler_on1.py           # ON1 Photo RAW workflow
+├── culler_universal.py     # Universal XMP workflow
+├── requirements.txt        # Core dependencies
+├── requirements_photo.txt  # Optional RAW/OpenCV extras
+└── config.yaml             # Example configuration values
 ```
 
 ## Dependencies 📦
 
 ### Required:
-- **Pillow**: Image processing
-- **NumPy**: Numerical operations  
-- **OpenCV**: Computer vision
 - **Click**: CLI framework
+- **NumPy**: Numerical operations
+- **Pillow**: Image processing
+- **Requests**: Ollama API calls
+- **tqdm**: Progress bars
 
-### Optional (Recommended):
-- **Ollama + llava:13b**: Advanced vision model with creative analysis
-- **rawpy**: Proper RAW file processing and thumbnail extraction
-- **PyTorch + CLIP**: Alternative vision model (fallback)
-- **CUDA**: GPU acceleration for faster processing
+### Optional:
+- **Ollama + Gemma 4**: Accurate mode
+- **rawpy**: Proper RAW thumbnail extraction
+- **OpenCV**: Better blur scoring in fast mode and hybrid Ollama mode
 
 ## Caching System 💾
 
@@ -345,17 +317,16 @@ Session insights:
 
 ### Common Issues:
 
-**"No module named 'torch'"**
-- Install vision model dependencies: `pip install torch clip-by-openai`
-- Or use fast mode: `--fast`
+**"No module named 'click'"**
+- Install the core dependencies: `pip install -r requirements.txt`
 
-**"Failed to load CLIP"**
-- Check GPU memory availability
-- Try CPU mode: `--force-cpu`  
-- Fall back to fast mode automatically
+**"Accurate mode requires Ollama"**
+- Start Ollama with `ollama serve`
+- Pull the model with `ollama pull gemma4:e4b`
+- Or switch to local triage mode: `--fast --no-ollama`
 
 **"No RAW files processed"**
-- Install rawpy: `pip install rawpy`
+- Install the optional photo extras: `pip install -r requirements_photo.txt`
 - Check file extensions: `--extensions nef,cr2,arw`
 
 **Slow processing**
@@ -372,7 +343,7 @@ Session insights:
 
 **"Model not found"**
 - List available models: `ollama list`
-- Pull the model if missing: `ollama pull llava:7b`
+- Pull the model if missing: `ollama pull gemma4:e4b`
 
 **"Ollama query failed"**
 - Check Ollama logs: `ollama logs`
@@ -400,23 +371,15 @@ Session insights:
 ## Advanced Usage 🎯
 
 ### Custom Decision Thresholds:
-Modify `decision.py`:
-```python
-CullingDecisionEngine(
-    blur_threshold=0.4,        # Stricter blur detection
-    exposure_threshold=0.3,    # More exposure tolerance
-    delete_confidence_threshold=0.8  # Higher confidence needed
-)
-```
+Adjust the thresholds inside `BatchCuller._make_decision()` if you want stricter or looser sorting behavior.
 
 ### Integration with Other Tools:
 ```python
 from pathlib import Path
 from batch import BatchCuller
-from models import ProcessingMode
 
-culler = BatchCuller(mode=ProcessingMode.ACCURATE)
-results = culler.process_folder_batch(Path("/photos"))
+culler = BatchCuller(mode="accurate", use_ollama=True)
+results = culler.process_folder_batch(Path("/photos"), [".jpg", ".jpeg", ".nef"])
 
 for result in results['Delete']:
     print(f"Delete: {result.filepath} ({result.confidence:.2f})")

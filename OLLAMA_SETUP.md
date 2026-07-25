@@ -33,16 +33,16 @@ ollama serve
 
 ### 3. Install Vision Model
 
-Choose a vision model (LLaVA models work best for photo analysis):
+Choose a vision model. Gemma 4 is the default path in this repo:
 
 ```bash
-# Recommended: 7B model (good balance of speed/accuracy)
-ollama pull llava:7b
+# Recommended default
+ollama pull gemma4:e4b
 
 # Alternatives:
-ollama pull llava:13b    # Better accuracy, slower
-ollama pull llava:34b    # Best accuracy, much slower
-ollama pull llava:7b-v1.6 # Latest version
+ollama pull gemma4        # Alias for the default Gemma 4 variant
+ollama pull gemma4:26b    # Better quality, slower
+ollama pull gemma4:31b    # Largest model, highest resource use
 ```
 
 ### 4. Verify Installation
@@ -51,7 +51,7 @@ Test that Ollama is working:
 
 ```bash
 # Test with a simple query
-ollama run llava:7b
+ollama run gemma4:e4b
 ```
 
 You should see a chat interface. Type `/bye` to exit.
@@ -61,30 +61,29 @@ You should see a chat interface. Type `/bye` to exit.
 ### Basic Usage
 
 ```bash
-# Use Ollama instead of CLIP
-python cli.py /path/to/photos --use-ollama
+# Use Ollama in the ON1 workflow
+python culler_on1.py /path/to/photos
 
 # Specify which Ollama model to use
-python cli.py /path/to/photos --use-ollama --ollama-model llava:13b
+python culler_on1.py /path/to/photos --ollama-model gemma4:26b
 
 # Combine with other options
-python cli.py /path/to/photos --use-ollama --cache-dir ~/.cache --batch-size 4
+python culler_universal.py /path/to/photos --cache-dir ~/.cache --ollama-model gemma4:e4b
 ```
 
 ### Configuration Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--use-ollama` | False | Enable Ollama vision analysis |
-| `--ollama-model` | `llava:7b` | Which Ollama model to use |
-| `--batch-size` | 8 | How many images to process in parallel |
+| `--use-ollama / --no-ollama` | Ollama on | Enable or disable Ollama vision analysis |
+| `--ollama-model` | `gemma4:e4b` | Which Ollama model to use |
 
 ### Performance Tips
 
 **Model Selection:**
-- `llava:7b` - Fast, good quality (recommended for most users)
-- `llava:13b` - Better accuracy, 2x slower
-- `llava:34b` - Best accuracy, 4x slower
+- `gemma4:e4b` - Best default balance of speed and quality
+- `gemma4:26b` - Better quality, more RAM/VRAM
+- `gemma4:31b` - Highest quality, heaviest model
 
 **Batch Size:**
 - Smaller batch sizes (2-4) for CPU processing
@@ -92,7 +91,7 @@ python cli.py /path/to/photos --use-ollama --cache-dir ~/.cache --batch-size 4
 
 **Hardware Recommendations:**
 - **CPU**: 16GB+ RAM, any modern processor
-- **GPU**: 8GB+ VRAM for 7b model, 16GB+ for 13b model
+- **GPU**: More memory helps significantly for `gemma4:26b` and `gemma4:31b`
 
 ## Troubleshooting
 
@@ -111,21 +110,21 @@ curl http://localhost:11434/api/tags
 ollama list
 
 # Pull the model if missing
-ollama pull llava:7b
+ollama pull gemma4:e4b
 ```
 
 ### "Ollama query failed"
 - Check Ollama logs: `ollama logs`
 - Restart Ollama service
-- Try a different model: `--ollama-model llava:7b-v1.6`
+- Try a different model: `--ollama-model gemma4:26b`
 
 ### Slow Processing
 ```bash
-# Reduce batch size
-python cli.py /photos --use-ollama --batch-size 2
+# Use the ON1 workflow
+python culler_on1.py /photos
 
-# Use smaller model
-python cli.py /photos --use-ollama --ollama-model llava:7b
+# Use a larger model
+python culler_on1.py /photos --ollama-model gemma4:26b
 ```
 
 ## Comparison: CLIP vs Ollama
@@ -145,20 +144,16 @@ python cli.py /photos --use-ollama --ollama-model llava:7b
 # 1. Install Ollama and model
 curl -fsSL https://ollama.ai/install.sh | sh
 ollama serve &
-ollama pull llava:7b
+ollama pull gemma4:e4b
 
 # 2. Install Python dependencies
-pip install rawpy opencv-python click requests
+pip install -r requirements.txt
+pip install -r requirements_photo.txt
 
 # 3. Run photo culler
-python cli.py ~/Photos/vacation_2024 \
-  --use-ollama \
+python culler_universal.py ~/Photos/vacation_2024 \
   --cache-dir ~/.cache/photo_culler \
-  --output results.json \
-  --batch-size 4
-
-# 4. Review results
-cat results.json | jq '.results.Delete[] | .file'
+  --ollama-model gemma4:e4b
 ```
 
 ## Advanced Usage
@@ -169,7 +164,7 @@ cat results.json | jq '.results.Delete[] | .file'
 from ollama_vision import OllamaVisionAnalyzer
 
 analyzer = OllamaVisionAnalyzer(
-    model="llava:13b",
+    model="gemma4:e4b",
     host="http://192.168.1.100:11434"
 )
 ```

@@ -34,11 +34,16 @@ class RawThumbnailExtractor:
                     return None
             
             # Standard formats
-            return Image.open(filepath)
+            with Image.open(filepath) as image:
+                return image.copy()
                 
         except Exception as e:
             self.logger.error(f"Failed to extract image from {filepath}: {e}")
             return None
+
+    def extract_thumbnail(self, filepath: Path) -> Optional[Image.Image]:
+        """Backward-compatible alias used by the CLI batch processor."""
+        return self.extract(filepath)
     
     def _extract_raw(self, filepath: Path) -> Optional[Image.Image]:
         """Extract image from RAW file using rawpy"""
@@ -48,7 +53,8 @@ class RawThumbnailExtractor:
                 try:
                     thumb = raw.extract_thumb()
                     if thumb.format == rawpy.ThumbFormat.JPEG:
-                        return Image.open(io.BytesIO(thumb.data))
+                        with Image.open(io.BytesIO(thumb.data)) as image:
+                            return image.copy()
                 except:
                     pass
                 

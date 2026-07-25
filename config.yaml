@@ -1,38 +1,55 @@
-# Photo Culler Configuration
+# Photo Culler configuration.
+#
+# Every value here is a default that command-line flags override. Delete any key to
+# fall back to the built-in default; delete the whole file and the tool still runs.
+
 model:
-  type: ollama  # or clip
-  ollama_model: gemma4:e4b  # or gemma4:26b / gemma4:31b
-  batch_size: 4
+  # Leave blank to auto-detect the best installed vision model in Ollama.
+  # Override with a tag such as qwen3-vl:30b-a3b-instruct.
+  name:
+  host: http://localhost:11434
+  timeout_seconds: 300
 
-# Adjusted for f/1.8 shooting
-thresholds:
-  blur:
-    delete: 0.3    # More forgiving for shallow DOF
-    review: 0.5
-  exposure:
-    delete: 0.3
-    review: 0.5
-  composition:
-    delete: 0.2
-    review: 0.4
-  
-# Subject detection
-subject_detection:
+  # Prove the model can actually see images before analysing a shoot. Turning this off
+  # is not recommended: a model without a vision encoder returns invented judgements.
+  verify_vision: true
+
+processing:
+  # Parallel requests to Ollama. Raising this only helps if Ollama itself is allowed to
+  # run requests in parallel -- set OLLAMA_NUM_PARALLEL to a matching value.
+  workers: 4
+
+  # Generate descriptions and keywords for frames that are not being rejected.
+  # Roughly doubles the time per photo.
+  tagging: true
+
+  recursive: true
+
+grouping:
+  # Frames taken within this many seconds of each other, that also look alike, are
+  # treated as one burst; only the strongest frame stays in Keep.
   enabled: true
-  portrait_eye_threshold: 0.6  # Minimum eye sharpness
-  center_weight: 0.3  # How much to weight center focus
+  burst_gap_seconds: 3.0
 
-# File handling  
-extensions:
-  - .nef
-  - .cr2
-  - .arw
-  - .jpg
-  - .jpeg
-  - .dng
-  - .raf
+# How much slack the culler gets before it may reject a photograph. Deleting always
+# needs two independent witnesses (the model and a measurement) regardless of these.
+decisions:
+  # A frame with provably sharp detail somewhere is never deleted for blur, even if the
+  # model calls it soft. Protects shallow depth of field, fog and minimal compositions.
+  sharp_evidence_vetoes_delete: true
 
-# Caching
-cache:
-  dir: ~/.cache/photo_culler
-  preserve_days: 30
+output:
+  # Written next to the photos unless an absolute path is given.
+  csv_dir: cull_runs
+
+  extensions:
+    - .nef
+    - .cr2
+    - .cr3
+    - .arw
+    - .dng
+    - .raf
+    - .rw2
+    - .orf
+    - .jpg
+    - .jpeg

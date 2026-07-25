@@ -1,5 +1,4 @@
 -r requirements.txt
 
-# Optional extras for RAW support and stronger blur analysis
-opencv-python>=4.8.0
+# RAW decoding (NEF, CR2, CR3, ARW, DNG...). Without it, RAW files are skipped.
 rawpy>=0.18.0

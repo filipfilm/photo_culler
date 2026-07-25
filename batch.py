@@ -1,5 +1,8 @@
+"""Folder-level orchestration: caching, threading, and the fast/accurate modes."""
+
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence
 import hashlib
@@ -7,26 +10,33 @@ import json
 import logging
 import time
 
-import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
 try:
+    from .blur_detector import BlurDetector
+    from .decision import CullDecider, DELETE, FAILED, KEEP, REVIEW
+    from .exposure import ExposureMeter
     from .extractor import RawThumbnailExtractor
+    from .grouping import annotate_results, compute_phash
     from .models import CullResult, ImageMetrics
-    from .ollama_vision import OllamaVisionAnalyzer
+    from .vision import OllamaVisionAnalyzer
 except ImportError:
+    from blur_detector import BlurDetector
+    from decision import CullDecider, DELETE, FAILED, KEEP, REVIEW
+    from exposure import ExposureMeter
     from extractor import RawThumbnailExtractor
+    from grouping import annotate_results, compute_phash
     from models import CullResult, ImageMetrics
-    from ollama_vision import OllamaVisionAnalyzer
+    from vision import OllamaVisionAnalyzer
 
-try:
-    from .blur_detector import HybridBlurDetector
-except ImportError:
-    try:
-        from blur_detector import HybridBlurDetector
-    except ImportError:
-        HybridBlurDetector = None
+# Bumped whenever prompts, schemas or decision rules change, so that cached results from
+# an older version of the tool are recomputed instead of silently reused.
+ANALYSIS_VERSION = "2"
+
+DEFAULT_EXTENSIONS = (
+    ".arw", ".cr2", ".cr3", ".nef", ".orf", ".raf", ".dng", ".rw2", ".jpg", ".jpeg",
+)
 
 
 class BatchCuller:
@@ -35,251 +45,201 @@ class BatchCuller:
         cache_dir: Optional[Path] = None,
         mode: str = "accurate",
         max_workers: int = 4,
-        batch_size: int = 8,
         use_ollama: bool = True,
-        ollama_model: str = "gemma4:e4b",
+        ollama_model: Optional[str] = None,
         ollama_host: str = "http://localhost:11434",
-        force_cpu: bool = False,
+        timeout: int = 180,
+        with_tags: bool = True,
+        verify_vision: bool = True,
         learning_enabled: bool = False,
     ):
         self.cache_dir = cache_dir
         self.mode = mode.lower()
         self.max_workers = max(1, max_workers)
-        self.batch_size = max(1, batch_size)
-        self.use_ollama = use_ollama and self.mode != "fast"
-        self.ollama_model = ollama_model
         self.ollama_host = ollama_host
-        self.force_cpu = force_cpu
+        self.with_tags = with_tags
         self.learning_enabled = learning_enabled
         self.logger = logging.getLogger(__name__)
+
         self.extractor = RawThumbnailExtractor(cache_dir)
+        self.blur_detector = BlurDetector()
+        self.exposure_meter = ExposureMeter()
+        self.decider = CullDecider()
+
         self._session_results: List[CullResult] = []
         self._session_summary_cache: Optional[Dict] = None
-        self.blur_detector = HybridBlurDetector() if HybridBlurDetector is not None else None
 
         if self.mode not in {"accurate", "fast"}:
-            raise ValueError(f"Unsupported mode: {mode}")
+            raise ValueError(f"Unsupported mode: {mode}. Use 'accurate' or 'fast'.")
 
         if self.mode == "accurate":
-            if not self.use_ollama:
-                raise ValueError("Accurate mode requires Ollama. Use --fast for local analysis.")
-            self.analyzer = OllamaVisionAnalyzer(model=ollama_model, host=ollama_host)
+            if not use_ollama:
+                raise ValueError(
+                    "Accurate mode needs a vision model. Use --fast for measurement-only triage."
+                )
+            self.analyzer = OllamaVisionAnalyzer(
+                model=ollama_model,
+                host=ollama_host,
+                timeout=timeout,
+                verify_vision=verify_vision,
+            )
+            self.ollama_model = self.analyzer.model
         else:
             self.analyzer = None
+            self.ollama_model = None
 
         if cache_dir:
             cache_dir.mkdir(parents=True, exist_ok=True)
 
+    # ------------------------------------------------------------------ caching
+
     def _get_cache_path(self, filepath: Path) -> Optional[Path]:
-        """Get cache file path for a given image"""
         if not self.cache_dir:
             return None
 
-        file_key = "|".join(
-            [
-                str(filepath.resolve()),
-                str(filepath.stat().st_mtime_ns),
-                self.mode,
-                self.ollama_model if self.use_ollama else "local",
-            ]
-        )
-        cache_name = hashlib.md5(file_key.encode()).hexdigest() + ".json"
-        return self.cache_dir / cache_name
+        file_key = "|".join([
+            str(filepath.resolve()),
+            str(filepath.stat().st_mtime_ns),
+            self.mode,
+            self.ollama_model or "local",
+            "tags" if self.with_tags else "notags",
+            ANALYSIS_VERSION,
+        ])
+        return self.cache_dir / (hashlib.md5(file_key.encode()).hexdigest() + ".json")
 
     def _load_cached_result(self, filepath: Path) -> Optional[CullResult]:
-        """Load cached analysis result if available"""
         cache_path = self._get_cache_path(filepath)
         if not cache_path or not cache_path.exists():
             return None
 
         try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                cached = json.load(f)
-
-            metrics = ImageMetrics(
-                blur_score=cached["metrics"]["blur_score"],
-                exposure_score=cached["metrics"]["exposure_score"],
-                composition_score=cached["metrics"]["composition_score"],
-                overall_quality=cached["metrics"]["overall_quality"],
-                keywords=cached["metrics"].get("keywords", []),
-                description=cached["metrics"].get("description", ""),
-            )
-
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            metrics = ImageMetrics(**cached["metrics"])
+            captured = cached.get("capture_time")
             return CullResult(
                 filepath=Path(cached["filepath"]),
                 decision=cached["decision"],
                 confidence=cached["confidence"],
                 metrics=metrics,
-                issues=cached.get("issues", self._identify_issues(metrics)),
+                issues=cached.get("issues", []),
                 processing_ms=cached.get("processing_ms", 0.0),
+                capture_time=datetime.fromisoformat(captured) if captured else None,
+                phash=cached.get("phash"),
             )
         except (OSError, ValueError, KeyError, TypeError) as e:
-            self.logger.warning(f"Failed to load cache for {filepath}: {e}")
+            self.logger.warning(f"Ignoring unreadable cache entry for {filepath.name}: {e}")
             return None
 
     def _save_cached_result(self, result: CullResult):
-        """Save analysis result to cache"""
         cache_path = self._get_cache_path(result.filepath)
-        if not cache_path or result.decision == "Failed":
+        if not cache_path or result.decision == FAILED:
             return
 
         try:
-            cached_data = {
-                "filepath": str(result.filepath),
-                "decision": result.decision,
-                "confidence": result.confidence,
-                "issues": result.issues,
-                "processing_ms": result.processing_ms,
-                "metrics": {
-                    "blur_score": result.metrics.blur_score,
-                    "exposure_score": result.metrics.exposure_score,
-                    "composition_score": result.metrics.composition_score,
-                    "overall_quality": result.metrics.overall_quality,
-                    "keywords": result.metrics.keywords or [],
-                    "description": result.metrics.description or "",
-                },
-            }
-
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump(cached_data, f, indent=2)
+            cache_path.write_text(
+                json.dumps({
+                    "filepath": str(result.filepath),
+                    "decision": result.decision,
+                    "confidence": result.confidence,
+                    "issues": result.issues,
+                    "processing_ms": result.processing_ms,
+                    "capture_time": result.capture_time.isoformat() if result.capture_time else None,
+                    "phash": result.phash,
+                    "metrics": vars(result.metrics),
+                }, indent=2),
+                encoding="utf-8",
+            )
         except OSError as e:
-            self.logger.warning(f"Failed to save cache for {result.filepath}: {e}")
+            self.logger.warning(f"Failed to cache result for {result.filepath.name}: {e}")
 
-    def _record_session_result(self, result: CullResult):
-        self._session_results.append(result)
-        self._session_summary_cache = None
-
-    def _make_decision(self, metrics: ImageMetrics) -> tuple[str, float]:
-        """Decision logic optimized for the simplified analyzer set."""
-        if metrics.blur_score < 0.35:
-            return "Delete", 0.8
-        if metrics.blur_score < 0.50:
-            return "Delete", 0.7
-        if metrics.exposure_score < 0.3:
-            return "Delete", 0.6
-        if metrics.overall_quality < 0.4:
-            return "Delete", 0.5
-        if metrics.overall_quality > 0.7:
-            return "Keep", 0.8
-        return "Review", 0.5
-
-    def _identify_issues(self, metrics: ImageMetrics) -> List[str]:
-        issues = []
-        if metrics.blur_score < 0.35:
-            issues.append("critical blur")
-        elif metrics.blur_score < 0.50:
-            issues.append("soft focus")
-
-        if metrics.exposure_score < 0.30:
-            issues.append("poor exposure")
-
-        if metrics.composition_score < 0.35:
-            issues.append("weak composition")
-
-        if metrics.overall_quality < 0.40 and not issues:
-            issues.append("low overall quality")
-
-        return issues
-
-    def _fallback_blur_score(self, gray_image: np.ndarray) -> float:
-        gradient_y = np.abs(np.diff(gray_image, axis=0)).mean() if gray_image.shape[0] > 1 else 0.0
-        gradient_x = np.abs(np.diff(gray_image, axis=1)).mean() if gray_image.shape[1] > 1 else 0.0
-        return float(np.clip((gradient_x + gradient_y) / 24.0, 0.0, 1.0))
+    # ------------------------------------------------------------------ analysis
 
     def _analyze_fast(self, image: Image.Image) -> ImageMetrics:
-        local_image = image.convert("RGB")
-        local_image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
-        gray_image = np.asarray(local_image.convert("L"), dtype=np.float32)
+        """Measurement-only triage: no model, therefore no deletions.
 
-        if self.blur_detector is not None:
-            blur_score = self.blur_detector.detect_cv_blur(local_image)["cv_sharpness_score"]
+        With only one witness (see decision.py) fast mode is not entitled to reject a
+        photograph, so its worst verdict is 'review'. It exists to shrink the pile a
+        human or the accurate pass has to look at, not to make final calls.
+        """
+        cv_stats = self.blur_detector.measure(image)
+        exposure_stats = self.exposure_meter.measure(image)
+
+        cv_score = cv_stats.get("sharpness_score")
+        if cv_score is None:
+            sharpness = "acceptable"
+        elif cv_stats["has_sharp_evidence"]:
+            sharpness = "sharp"
+        elif cv_score >= 0.35:
+            sharpness = "acceptable"
         else:
-            blur_score = self._fallback_blur_score(gray_image)
+            sharpness = "soft"
 
-        mean_exposure = float(gray_image.mean() / 255.0)
-        exposure_score = float(np.clip(1.0 - abs(mean_exposure - 0.5) / 0.5, 0.0, 1.0))
+        exposure_category = exposure_stats["category"]
+        suspect = sharpness == "soft" or exposure_category != "good"
 
-        contrast_score = float(np.clip(gray_image.std() / 64.0, 0.0, 1.0))
-        thirds_rows = [gray_image.shape[0] // 3, (2 * gray_image.shape[0]) // 3]
-        thirds_cols = [gray_image.shape[1] // 3, (2 * gray_image.shape[1]) // 3]
-        interest_values = [
-            gray_image[min(r, gray_image.shape[0] - 1), min(c, gray_image.shape[1] - 1)]
-            for r in thirds_rows
-            for c in thirds_cols
-        ]
-        interest_score = float(np.clip(np.std(interest_values) / 48.0, 0.0, 1.0))
-        composition_score = float(np.clip(0.65 * contrast_score + 0.35 * interest_score, 0.0, 1.0))
-
-        overall_quality = float(
-            np.clip(
-                0.5 * blur_score + 0.3 * exposure_score + 0.2 * composition_score,
-                0.0,
-                1.0,
-            )
-        )
-
-        return ImageMetrics(
-            blur_score=blur_score,
-            exposure_score=exposure_score,
-            composition_score=composition_score,
-            overall_quality=overall_quality,
-            keywords=[],
-            description="Fast local analysis",
+        return ImageMetrics.from_triage(
+            {
+                "subject": "",
+                "subject_sharpness": sharpness,
+                "exposure": exposure_category,
+                "framing": "fine",
+                "technical_issues": [],
+                "verdict": "review" if suspect else "keep",
+                "verdict_reason": "measurement-only triage (fast mode)",
+            },
+            cv_sharpness=cv_score,
+            exposure_stats=exposure_stats,
         )
 
     def _build_failed_result(self, filepath: Path, issue: str, start_time: float) -> CullResult:
-        processing_ms = (time.time() - start_time) * 1000
         return CullResult(
             filepath=filepath,
-            decision="Failed",
+            decision=FAILED,
             confidence=0.0,
-            metrics=ImageMetrics(
-                blur_score=0.0,
-                exposure_score=0.0,
-                composition_score=0.0,
-                overall_quality=0.0,
-                keywords=[],
-                description="",
-            ),
+            metrics=ImageMetrics(0.0, 0.0, 0.0, 0.0, keywords=[], description=""),
             issues=[issue],
-            processing_ms=processing_ms,
+            processing_ms=(time.time() - start_time) * 1000,
         )
 
     def _process_single_image(self, filepath: Path) -> CullResult:
-        """Process a single image file."""
         start_time = time.time()
 
-        cached_result = self._load_cached_result(filepath)
-        if cached_result is not None:
-            self._record_session_result(cached_result)
-            return cached_result
+        cached = self._load_cached_result(filepath)
+        if cached is not None:
+            self._record_session_result(cached)
+            return cached
 
         try:
-            image = self.extractor.extract_thumbnail(filepath)
+            image, info = self.extractor.extract_with_info(filepath)
             if image is None:
-                result = self._build_failed_result(filepath, "unsupported or unreadable image", start_time)
+                result = self._build_failed_result(
+                    filepath, "unsupported or unreadable image", start_time
+                )
                 self._record_session_result(result)
                 return result
 
             if self.mode == "fast":
                 metrics = self._analyze_fast(image)
             else:
-                metrics = self.analyzer.analyze(image)
+                metrics = self.analyzer.analyze(image, with_tags=self.with_tags)
 
-            decision, confidence = self._make_decision(metrics)
+            decision, confidence, issues = self.decider.decide(metrics)
             result = CullResult(
                 filepath=filepath,
                 decision=decision,
                 confidence=confidence,
                 metrics=metrics,
-                issues=self._identify_issues(metrics),
+                issues=issues,
                 processing_ms=(time.time() - start_time) * 1000,
+                capture_time=info.get("capture_time"),
+                phash=compute_phash(image),
             )
             self._save_cached_result(result)
             self._record_session_result(result)
             return result
+
         except Exception as e:
-            self.logger.error(f"Failed to process {filepath}: {e}")
+            self.logger.error(f"Failed to process {filepath.name}: {e}")
             result = self._build_failed_result(filepath, str(e), start_time)
             self._record_session_result(result)
             return result
@@ -287,30 +247,29 @@ class BatchCuller:
     def process_image(self, filepath: Path) -> CullResult:
         return self._process_single_image(filepath)
 
-    def _find_image_files(self, folder_path: Path, extensions: Sequence[str]) -> List[Path]:
-        normalized_exts = []
-        for ext in extensions:
-            normalized = ext.lower()
-            if not normalized.startswith("."):
-                normalized = "." + normalized
-            normalized_exts.append(normalized)
+    # ------------------------------------------------------------------ folders
 
-        image_files = set()
-        for ext in normalized_exts:
-            image_files.update(folder_path.glob(f"**/*{ext}"))
-            image_files.update(folder_path.glob(f"**/*{ext.upper()}"))
-
-        return sorted(image_files)
+    def find_image_files(
+        self, folder_path: Path, extensions: Sequence[str], recursive: bool = True
+    ) -> List[Path]:
+        normalized = {
+            ext.lower() if ext.startswith(".") else f".{ext.lower()}" for ext in extensions
+        }
+        pattern = "**/*" if recursive else "*"
+        return sorted(
+            p for p in folder_path.glob(pattern)
+            if p.is_file() and p.suffix.lower() in normalized
+        )
 
     def cull_folder(
         self,
         folder_path: Path,
-        extensions: Sequence[str] = (".arw", ".cr2", ".cr3", ".nef", ".orf", ".raf", ".dng", ".jpg", ".jpeg"),
+        extensions: Sequence[str] = DEFAULT_EXTENSIONS,
         progress_callback=None,
+        recursive: bool = True,
+        group_bursts: bool = True,
     ) -> List[CullResult]:
-        """Process all images in a folder."""
-        image_files = self._find_image_files(folder_path, extensions)
-
+        image_files = self.find_image_files(folder_path, extensions, recursive)
         if not image_files:
             self.logger.warning(f"No image files found in {folder_path}")
             return []
@@ -319,63 +278,76 @@ class BatchCuller:
         results: List[CullResult] = []
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_file = {
-                executor.submit(self._process_single_image, filepath): filepath for filepath in image_files
+            futures = {
+                executor.submit(self._process_single_image, path): path for path in image_files
             }
-
-            with tqdm(total=len(image_files), desc="Processing images") as pbar:
-                for future in as_completed(future_to_file):
-                    filepath = future_to_file[future]
+            with tqdm(total=len(image_files), desc="Analysing", unit="img") as pbar:
+                for future in as_completed(futures):
+                    path = futures[future]
                     try:
                         result = future.result()
                     except Exception as e:
-                        self.logger.error(f"Processing failed for {filepath}: {e}")
-                        result = self._build_failed_result(filepath, str(e), time.time())
+                        self.logger.error(f"Processing failed for {path.name}: {e}")
+                        result = self._build_failed_result(path, str(e), time.time())
                         self._record_session_result(result)
 
                     results.append(result)
-
                     if progress_callback:
                         progress_callback(result)
-
                     pbar.update(1)
 
+        if group_bursts:
+            self.grouping_summary = annotate_results(results)
+            self.logger.info(
+                f"Burst grouping: {self.grouping_summary['bursts']} bursts, "
+                f"{self.grouping_summary['demoted_to_review']} redundant frames moved to Review"
+            )
+
+        results.sort(key=lambda r: r.filepath.name)
         return results
 
-    def process_folder_batch(self, folder_path: Path, extensions: Sequence[str]) -> Dict[str, List[CullResult]]:
-        grouped_results = {"Keep": [], "Delete": [], "Review": [], "Failed": []}
+    def process_folder_batch(
+        self, folder_path: Path, extensions: Sequence[str]
+    ) -> Dict[str, List[CullResult]]:
+        grouped: Dict[str, List[CullResult]] = {KEEP: [], DELETE: [], REVIEW: [], FAILED: []}
         for result in self.cull_folder(folder_path, extensions):
-            grouped_results.setdefault(result.decision, []).append(result)
-        return grouped_results
+            grouped.setdefault(result.decision, []).append(result)
+        return grouped
+
+    # ------------------------------------------------------------------ session
+
+    def _record_session_result(self, result: CullResult):
+        self._session_results.append(result)
+        self._session_summary_cache = None
 
     def get_session_summary(self) -> Dict:
         if self._session_summary_cache is not None:
             return self._session_summary_cache
 
-        valid_results = [result for result in self._session_results if result.decision != "Failed"]
-        if not valid_results:
+        valid = [r for r in self._session_results if r.decision != FAILED]
+        if not valid:
             self._session_summary_cache = {"total_processed": 0, "detected_style": {}}
             return self._session_summary_cache
 
         keywords = Counter(
-            keyword
-            for result in valid_results
-            for keyword in (result.metrics.keywords or [])
-            if keyword
+            kw for r in valid for kw in (r.metrics.keywords or []) if kw
+        )
+        subjects = Counter(
+            r.metrics.subject for r in valid if r.metrics.subject
         )
 
         summary = {
-            "total_processed": len(valid_results),
-            "avg_blur": sum(r.metrics.blur_score for r in valid_results) / len(valid_results),
-            "avg_exposure": sum(r.metrics.exposure_score for r in valid_results) / len(valid_results),
-            "avg_composition": sum(r.metrics.composition_score for r in valid_results) / len(valid_results),
+            "total_processed": len(valid),
+            "model": self.ollama_model or "local",
+            "avg_blur": sum(r.metrics.blur_score for r in valid) / len(valid),
+            "avg_exposure": sum(r.metrics.exposure_score for r in valid) / len(valid),
+            "avg_composition": sum(r.metrics.composition_score for r in valid) / len(valid),
             "detected_style": {},
         }
-
         if keywords:
-            summary["detected_style"]["common_subjects"] = [
-                keyword for keyword, _ in keywords.most_common(3)
-            ]
+            summary["detected_style"]["common_keywords"] = [k for k, _ in keywords.most_common(5)]
+        if subjects:
+            summary["detected_style"]["common_subjects"] = [s for s, _ in subjects.most_common(3)]
 
         self._session_summary_cache = summary
         return summary
@@ -383,38 +355,31 @@ class BatchCuller:
     def save_session(self):
         if not self.cache_dir:
             return
-
-        session_summary = self.get_session_summary()
-        if session_summary.get("total_processed", 0) == 0:
+        summary = self.get_session_summary()
+        if summary.get("total_processed", 0) == 0:
             return
-
-        session_path = self.cache_dir / "session_summary.json"
-        with open(session_path, "w", encoding="utf-8") as f:
-            json.dump(session_summary, f, indent=2)
+        (self.cache_dir / "session_summary.json").write_text(
+            json.dumps(summary, indent=2), encoding="utf-8"
+        )
 
     def get_statistics(self, results: Iterable[CullResult]) -> Dict:
         results = list(results)
-        valid_results = [result for result in results if result.decision != "Failed"]
         if not results:
             return {}
 
-        stats = {
-            "total_images": len(results),
-            "decisions": {},
-            "avg_scores": {},
-            "keywords_found": 0,
-        }
+        valid = [r for r in results if r.decision != FAILED]
+        stats = {"total_images": len(results), "decisions": {}, "avg_scores": {}, "keywords_found": 0}
 
         for result in results:
             stats["decisions"][result.decision] = stats["decisions"].get(result.decision, 0) + 1
 
-        if valid_results:
+        if valid:
             stats["avg_scores"] = {
-                "blur": sum(r.metrics.blur_score for r in valid_results) / len(valid_results),
-                "exposure": sum(r.metrics.exposure_score for r in valid_results) / len(valid_results),
-                "composition": sum(r.metrics.composition_score for r in valid_results) / len(valid_results),
-                "overall": sum(r.metrics.overall_quality for r in valid_results) / len(valid_results),
+                "blur": sum(r.metrics.blur_score for r in valid) / len(valid),
+                "exposure": sum(r.metrics.exposure_score for r in valid) / len(valid),
+                "composition": sum(r.metrics.composition_score for r in valid) / len(valid),
+                "overall": sum(r.metrics.overall_quality for r in valid) / len(valid),
             }
-            stats["keywords_found"] = len([r for r in valid_results if r.metrics.keywords])
+            stats["keywords_found"] = len([r for r in valid if r.metrics.keywords])
 
         return stats

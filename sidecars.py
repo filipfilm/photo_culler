@@ -38,16 +38,15 @@ CULLER_PREFIXES = (
     "CullerDuplicate:",
 )
 
-# Keywords ON1's own classifier generates. They are regenerated on import, so carrying
-# them forward just compounds noise run after run.
-ON1_AUTO_KEYWORDS = {
-    "Aqua", "Azure", "Banner", "Brick wall", "Bridge", "Building", "Color", "Concrete",
-    "Dirt", "Fence", "Floor", "Font", "Gesture", "Glass", "Grass", "Human action",
-    "Human head", "Material property", "Metal", "Mountain", "Natural environment",
-    "Paper", "Person", "Photography", "Plant", "Plastic", "Sand", "Sea", "Skin", "Sky",
-    "Snapshot", "Snow", "Snowboard", "Sports equipment", "T-shirt", "Textile", "Tree",
-    "Vivid", "Wall", "Wood",
-}
+# ON1 generates its own keywords ("Person", "Sky", "T-shirt") and they do pile up. An
+# earlier version of this file tried to strip them using a hardcoded list of likely
+# candidates, which cannot work: ON1 records its classifications as numeric ids with no
+# text anywhere in the sidecar, so the list was guesswork that would happily delete a
+# photographer's own "Person" or "Bridge" keyword.
+#
+# So preserve mode now preserves. Everything except this tool's own keywords survives.
+# Use --override for a clean slate; that path also clears the classifications ON1
+# regenerates its keywords from, so they do not immediately come back.
 
 
 def culler_keywords(result: CullResult) -> List[str]:
@@ -130,10 +129,7 @@ def write_on1_sidecar(result: CullResult, override: bool = False) -> bool:
                 if c.get("type") not in ("ONPanopticSegmenterV0", "PartialLabelingCSL")
             ]
     else:
-        keywords = [
-            kw for kw in metadata.get("Keywords", [])
-            if not _is_culler_keyword(kw) and kw not in ON1_AUTO_KEYWORDS
-        ]
+        keywords = [kw for kw in metadata.get("Keywords", []) if not _is_culler_keyword(kw)]
 
     if result.metrics.keywords:
         keywords.extend(result.metrics.keywords[:8])
@@ -222,9 +218,27 @@ def read_existing_xmp(xmp_file: Path) -> Dict:
     return existing
 
 
+def xmp_path_for(photo: Path) -> Path:
+    """Where this photo's XMP sidecar lives.
+
+    Two conventions are in the wild: photo.xmp (Adobe, Lightroom, ON1) and photo.NEF.xmp
+    (darktable and others). Writing the wrong one leaves a second sidecar competing with
+    the catalogue's, and the photographer's existing keywords sit in a file we never
+    read. So an existing sidecar always wins, and otherwise we follow Adobe.
+    """
+    replaced = photo.with_suffix(".xmp")
+    appended = Path(str(photo) + ".xmp")
+
+    if replaced.exists():
+        return replaced
+    if appended.exists():
+        return appended
+    return replaced
+
+
 def write_xmp_sidecar(result: CullResult, override: bool = False) -> bool:
     """Write a .xmp sidecar next to the photo, preserving existing user metadata."""
-    xmp_file = result.filepath.with_suffix(result.filepath.suffix + ".xmp")
+    xmp_file = xmp_path_for(result.filepath)
     existing = read_existing_xmp(xmp_file)
 
     keywords = [] if override else list(existing["keywords"])
@@ -239,7 +253,14 @@ def write_xmp_sidecar(result: CullResult, override: bool = False) -> bool:
     else:
         description = f"PhotoCuller: {result.decision}"
 
-    rating = existing["rating"] or str(suggested_rating(result.metrics))
+    # Photo apps write 0 to mean "unrated", so that is a slot to fill, not a rating to
+    # preserve. Anything the photographer actually set is left alone.
+    existing_rating = (existing["rating"] or "").strip()
+    rating = (
+        existing_rating
+        if existing_rating and existing_rating != "0"
+        else str(suggested_rating(result.metrics))
+    )
 
     # Descriptions and keywords are free text straight from a model, so every value has
     # to be escaped -- an unescaped ampersand produces a sidecar no photo app will open.

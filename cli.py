@@ -168,6 +168,7 @@ def move_deletions(results: Sequence[CullResult], folder: Path, min_confidence: 
             # orphans pointing at a file that moved.
             for companion in (
                 result.filepath.with_suffix(".on1"),
+                result.filepath.with_suffix(".xmp"),
                 Path(str(result.filepath) + ".xmp"),
             ):
                 if companion.exists():

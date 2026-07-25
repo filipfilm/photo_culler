@@ -31,9 +31,13 @@ working, not failing. It is a triage assistant, not a decision maker.
 ## Install
 
 ```bash
-pip install -r requirements.txt          # core
+pip install -r requirements.txt          # core, includes HEIC/HEIF for iPhone photos
 pip install -r requirements_photo.txt    # adds RAW support (NEF, CR2, ARW, DNG...)
 ```
+
+Handles RAW (NEF, CR2, CR3, ARW, DNG, RAF, RW2, ORF), JPEG, and HEIC/HEIF. Mixed
+folders are fine — an iPhone shot and a Nikon RAW of the same moment group into the
+same burst, since capture time and appearance are what matter, not file format.
 
 Then install a vision model:
 
@@ -235,6 +239,9 @@ python test_no_destructive_operations.py
 # Decision-logic invariants. No model needed, runs instantly.
 python test_decision.py
 
+# Which formats are accepted, and that the two extension lists agree.
+python test_formats.py
+
 # End to end against your own photographs. Builds a ground-truth set by taking
 # real frames and also defocusing / under- / overexposing them, then checks that
 # no original is ever sent to Delete.
@@ -262,6 +269,7 @@ cli.py            Shared command line
 culler_on1.py     Entry point, ON1 sidecars
 culler_universal.py  Entry point, XMP sidecars
 test_decision.py  Invariants for the two-witness rule
+test_formats.py   Accepted formats, and the two extension lists agreeing
 test_no_destructive_operations.py  Proof no code path can touch a photo file
 eval_harness.py   End-to-end check against generated ground truth
 ```

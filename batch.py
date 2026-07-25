@@ -35,7 +35,8 @@ except ImportError:
 ANALYSIS_VERSION = "3"
 
 DEFAULT_EXTENSIONS = (
-    ".arw", ".cr2", ".cr3", ".nef", ".orf", ".raf", ".dng", ".rw2", ".jpg", ".jpeg",
+    ".arw", ".cr2", ".cr3", ".nef", ".orf", ".raf", ".dng", ".rw2",
+    ".jpg", ".jpeg", ".heic", ".heif",
 )
 
 # Seconds to wait before the single retry of a failed analysis.

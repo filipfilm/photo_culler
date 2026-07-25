@@ -11,3 +11,6 @@ opencv-python>=4.8.0
 
 # Burst grouping and duplicate detection.
 ImageHash>=4.3.0
+
+# HEIC/HEIF support, which is what iPhones shoot.
+pillow-heif>=0.13.0

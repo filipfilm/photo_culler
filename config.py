@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_NAME = "config.yaml"
 
 DEFAULT_EXTENSIONS = [
-    ".nef", ".cr2", ".cr3", ".arw", ".dng", ".raf", ".rw2", ".orf", ".jpg", ".jpeg",
+    ".nef", ".cr2", ".cr3", ".arw", ".dng", ".raf", ".rw2", ".orf",
+    ".jpg", ".jpeg", ".heic", ".heif",
 ]
 
 

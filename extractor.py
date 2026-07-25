@@ -1,4 +1,4 @@
-"""Loading pixels out of RAW and standard image files."""
+"""Loading pixels out of RAW, HEIF and standard image files."""
 
 from datetime import datetime
 from pathlib import Path
@@ -15,9 +15,22 @@ try:
 except ImportError:  # pragma: no cover - depends on environment
     RAWPY_AVAILABLE = False
 
+try:
+    # HEIC/HEIF is what iPhones shoot. Pillow cannot read it unaided; registering the
+    # opener teaches Image.open() the format, after which it behaves like any JPEG and
+    # needs no special handling anywhere else in the codebase.
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+    HEIF_AVAILABLE = True
+except ImportError:  # pragma: no cover - depends on environment
+    HEIF_AVAILABLE = False
+
 RAW_EXTENSIONS = {
     ".nef", ".cr2", ".cr3", ".arw", ".dng", ".raf", ".orf", ".rw2", ".pef", ".srw", ".x3f",
 }
+
+HEIF_EXTENSIONS = {".heic", ".heif"}
 
 # EXIF tag ids, avoiding a PIL.ExifTags lookup per file.
 _DATETIME_ORIGINAL = 36867
@@ -48,14 +61,22 @@ class RawThumbnailExtractor:
         Capture time comes back here rather than from a second pass because decoding a
         RAW file twice to read one timestamp is the most expensive way to get it.
         """
+        suffix = filepath.suffix.lower()
         try:
-            if filepath.suffix.lower() in self.raw_extensions:
+            if suffix in self.raw_extensions:
                 if not RAWPY_AVAILABLE:
                     self.logger.warning(
                         f"rawpy not installed, skipping RAW file {filepath.name}"
                     )
                     return None, {}
                 return self._extract_raw(filepath)
+
+            if suffix in HEIF_EXTENSIONS and not HEIF_AVAILABLE:
+                self.logger.warning(
+                    f"pillow-heif not installed, skipping {filepath.name}. "
+                    "Install it with: pip install pillow-heif"
+                )
+                return None, {}
 
             with Image.open(filepath) as image:
                 info = {"capture_time": self._capture_time_from_exif(image, filepath)}

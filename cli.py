@@ -7,11 +7,9 @@ write.
 
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 import csv
-import functools
 import logging
-import sys
 
 import click
 from tqdm import tqdm
@@ -159,8 +157,7 @@ def move_deletions(results: Sequence[CullResult], folder: Path, min_confidence: 
         try:
             destination = trash / result.filepath.name
             if destination.exists():
-                logger = logging.getLogger(__name__)
-                logger.warning(f"Skipping {result.filepath.name}: already in _culled_deletes")
+                print(f"  skipping {result.filepath.name}: already in _culled_deletes")
                 continue
             result.filepath.rename(destination)
 

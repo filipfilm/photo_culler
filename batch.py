@@ -52,6 +52,8 @@ class BatchCuller:
         with_tags: bool = True,
         verify_vision: bool = True,
         context_tokens: int = 8192,
+        burst_gap_seconds: float = 3.0,
+        sharp_evidence_vetoes_delete: bool = True,
         learning_enabled: bool = False,
     ):
         self.cache_dir = cache_dir
@@ -59,13 +61,14 @@ class BatchCuller:
         self.max_workers = max(1, max_workers)
         self.ollama_host = ollama_host
         self.with_tags = with_tags
+        self.burst_gap_seconds = burst_gap_seconds
         self.learning_enabled = learning_enabled
         self.logger = logging.getLogger(__name__)
 
         self.extractor = RawThumbnailExtractor(cache_dir)
         self.blur_detector = BlurDetector()
         self.exposure_meter = ExposureMeter()
-        self.decider = CullDecider()
+        self.decider = CullDecider(sharp_evidence_vetoes_delete=sharp_evidence_vetoes_delete)
 
         self._session_results: List[CullResult] = []
         self._session_summary_cache: Optional[Dict] = None
@@ -299,7 +302,9 @@ class BatchCuller:
                     pbar.update(1)
 
         if group_bursts:
-            self.grouping_summary = annotate_results(results)
+            self.grouping_summary = annotate_results(
+                results, burst_gap_seconds=self.burst_gap_seconds
+            )
             self.logger.info(
                 f"Burst grouping: {self.grouping_summary['bursts']} bursts, "
                 f"{self.grouping_summary['demoted_to_review']} redundant frames moved to Review"

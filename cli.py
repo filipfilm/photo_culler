@@ -257,6 +257,8 @@ def run_cull(sidecar_style: Optional[str], **kwargs) -> int:
             ollama_host=host,
             timeout=config.timeout_seconds,
             context_tokens=config.context_tokens,
+            burst_gap_seconds=config.burst_gap_seconds,
+            sharp_evidence_vetoes_delete=config.sharp_evidence_vetoes_delete,
             with_tags=with_tags,
             verify_vision=config.verify_vision and not kwargs.get("skip_vision_check", False),
         )
